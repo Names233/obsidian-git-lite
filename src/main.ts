@@ -511,9 +511,11 @@ export default class ObsidianGit extends Plugin {
                                     this.log("AI commit message: 开始生成 - Starting generation");
                                     this.log("AI commit message: API Key 配置 - API Key configured:", !!this.settings.aiApiKey);
             
-                                    const diff = this.gitManager instanceof SimpleGit
-                                        ? await this.gitManager.git.diff(["HEAD"])
-                                        : "";
+                                    // 获取工作目录的更改（unstaged）
+                                                                // Get working directory changes (unstaged)
+                                                                const diff = this.gitManager instanceof SimpleGit
+                                                                    ? await this.gitManager.git.diff()
+                                                                    : "";
             
                                     this.log("AI commit message: diff 长度 - diff length:", diff?.length || 0);
             
