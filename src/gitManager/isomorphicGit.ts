@@ -523,9 +523,25 @@ export class IsomorphicGit extends GitManager {
     /**
      * 获取 Git 配置值 - Get git config value
      */
-    private async getConfig(path: string): Promise<string> {
+    async getConfig(path: string): Promise<string> {
         try {
             return this.wrapFS(git.getConfig({ ...this.getRepo(), path }) as Promise<string>);
+        } catch (error) {
+            this.plugin.displayError(error);
+            throw error;
+        }
+    }
+
+    /**
+     * 设置 Git 配置值 - Set git config value（传 undefined 则取消设置）
+     */
+    async setConfig(path: string, value: string | undefined): Promise<void> {
+        try {
+            if (value !== undefined) {
+                await this.wrapFS(git.setConfig({ ...this.getRepo(), path, value }));
+            } else {
+                await this.wrapFS(git.setConfig({ ...this.getRepo(), path, value: undefined }));
+            }
         } catch (error) {
             this.plugin.displayError(error);
             throw error;

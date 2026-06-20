@@ -50,6 +50,12 @@ export abstract class GitManager {
     // 检查 Git 环境是否就绪 - Check if git environment is ready
     abstract checkRequirements(): Promise<"valid" | "missing-git" | "missing-repo">;
 
+    // 获取 Git 配置值 - Get git config value
+    abstract getConfig(path: string): Promise<string>;
+
+    // 设置 Git 配置值 - Set git config value（传 undefined 则取消设置）
+    abstract setConfig(path: string, value: string | undefined): Promise<void>;
+
     // 卸载清理 - Unload cleanup
     unload(): void {}
 

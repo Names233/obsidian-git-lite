@@ -322,6 +322,20 @@ export class SimpleGit extends GitManager {
         };
     }
 
+    // 获取 Git 配置值 - Get git config value
+    async getConfig(path: string): Promise<string> {
+        return (await this.git.raw(["config", path])).trim();
+    }
+
+    // 设置 Git 配置值 - Set git config value（传 undefined 则取消设置）
+    async setConfig(path: string, value: string | undefined): Promise<void> {
+        if (value !== undefined) {
+            await this.git.raw(["config", path, value]);
+        } else {
+            await this.git.raw(["config", "--unset", path]);
+        }
+    }
+
     // 获取最后提交时间 - Get last commit time
     async getLastCommitTime(): Promise<Date | undefined> {
         try {
