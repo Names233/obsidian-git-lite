@@ -2,6 +2,7 @@
 // 调用 OpenAI 兼容 API 自动生成简洁的 commit message
 // Calls OpenAI-compatible API to generate concise commit messages
 
+import { requestUrl } from "obsidian";
 import type ObsidianGit from "./main";
 
 // ── 缓存条目 - Cache entry ───────────────────────────────────────
@@ -127,35 +128,31 @@ export class AICommitMessageGenerator {
                 max_tokens: 100,
             };
 
-            // 使用 AbortController 实现超时 - Use AbortController for timeout
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
             this.plugin.log("AI commit message: 正在调用 API - Calling API...");
 
-            const response = await fetch(endpoint, {
+            // 使用 Obsidian requestUrl 避免 CORS 问题
+            // Use Obsidian requestUrl to avoid CORS issues
+            const response = await requestUrl({
+                url: endpoint,
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${apiKey}`,
                 },
                 body: JSON.stringify(body),
-                signal: controller.signal,
+                throw: false,
             });
 
-            clearTimeout(timeoutId);
-
             // 检查响应状态 - Check response status
-            if (!response.ok) {
-                const errorText = await response.text().catch(() => "Unknown error");
+            if (response.status >= 400) {
                 console.error(
-                    `AI commit message: API 请求失败 - API request failed: ${response.status} ${errorText}`,
+                    `AI commit message: API 请求失败 - API request failed: ${response.status} ${response.text}`,
                 );
                 return null;
             }
 
             // 解析响应 - Parse response
-            const data = (await response.json()) as {
+            const data = response.json as {
                 choices?: Array<{ message?: { content?: string } }>;
             };
 
@@ -169,12 +166,8 @@ export class AICommitMessageGenerator {
             this.plugin.log("AI commit message: API 调用成功 - API call successful");
             return content;
         } catch (error) {
-            // 处理超时和其他错误 - Handle timeout and other errors
-            if (error instanceof DOMException && error.name === "AbortError") {
-                console.error("AI commit message: API 请求超时 - API request timed out");
-            } else {
-                console.error("AI commit message: API 调用出错 - API call error:", error);
-            }
+            // 处理请求错误 - Handle request errors
+            console.error("AI commit message: API 调用出错 - API call error:", error);
             return null;
         }
     }
