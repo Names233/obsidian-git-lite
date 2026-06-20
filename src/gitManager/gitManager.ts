@@ -41,6 +41,9 @@ export abstract class GitManager {
     // 推送到远程 - Push to remote
     abstract push(): Promise<number | undefined | null>;
 
+    // 检查是否有可推送的本地提交 - Check if there are local commits to push
+    abstract canPush(): Promise<boolean>;
+
     // 初始化 Git 仓库 - Initialize git repo
     abstract init(): Promise<void>;
 

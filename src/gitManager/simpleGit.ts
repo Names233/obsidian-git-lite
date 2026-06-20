@@ -336,6 +336,15 @@ export class SimpleGit extends GitManager {
         }
     }
 
+    // 检查是否有可推送的本地提交 - Check if there are local commits to push
+    async canPush(): Promise<boolean> {
+        const branchInfo = await this.branchInfo();
+        if (!branchInfo.tracking || !branchInfo.current) return false;
+        const localCommit = await this.git.revparse([branchInfo.current]);
+        const remoteCommit = await this.git.revparse([branchInfo.tracking]);
+        return localCommit !== remoteCommit;
+    }
+
     // 获取最后提交时间 - Get last commit time
     async getLastCommitTime(): Promise<Date | undefined> {
         try {
