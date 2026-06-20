@@ -120,6 +120,54 @@ export default class ObsidianGit extends Plugin {
         this.settingsTab = new ObsidianGitSettingsTab(this.app, this);
         this.addSettingTab(this.settingsTab);
 
+        this.addCommand({
+            id: "pull",
+            name: "拉取 - Pull",
+            callback: () => this.promiseQueue.addTask(() =>
+                this.pullChangesFromRemote()
+            ),
+        });
+
+        this.addCommand({
+            id: "push",
+            name: "提交并同步 - Commit-and-sync",
+            callback: () => this.promiseQueue.addTask(() =>
+                this.commitAndSync({ fromAutoBackup: false })
+            ),
+        });
+
+        this.addCommand({
+            id: "commit",
+            name: "提交所有更改 - Commit all changes",
+            callback: () => this.promiseQueue.addTask(() =>
+                this.commit({ fromAuto: false })
+            ),
+        });
+
+        this.addCommand({
+            id: "commit-push-specified-message",
+            name: "提交并同步（自定义消息） - Commit-and-sync with specific message",
+            callback: () => this.promiseQueue.addTask(() =>
+                this.commitAndSync({ fromAutoBackup: false, requestCustomMessage: true })
+            ),
+        });
+
+        this.addCommand({
+            id: "commit-specified-message",
+            name: "提交所有更改（自定义消息） - Commit all changes with specific message",
+            callback: () => this.promiseQueue.addTask(() =>
+                this.commit({ fromAuto: false, requestCustomMessage: true })
+            ),
+        });
+
+        this.addCommand({
+            id: "push2",
+            name: "推送 - Push",
+            callback: () => this.promiseQueue.addTask(() =>
+                this.push()
+            ),
+        });
+
         if (!this.localStorage.getPluginDisabled()) {
             this.registerEvents();
             this.app.workspace.onLayoutReady(() =>
