@@ -511,11 +511,14 @@ export default class ObsidianGit extends Plugin {
                                     this.log("AI commit message: 开始生成 - Starting generation");
                                     this.log("AI commit message: API Key 配置 - API Key configured:", !!this.settings.aiApiKey);
             
-                                    // 获取工作目录的更改（unstaged）
-                                                                // Get working directory changes (unstaged)
-                                                                const diff = this.gitManager instanceof SimpleGit
-                                                                    ? await this.gitManager.git.diff()
-                                                                    : "";
+                                    // 先 stage 所有文件，再获取 staged 的 diff
+                                    // Stage all files first, then get staged diff
+                                    if (this.gitManager instanceof SimpleGit) {
+                                        await this.gitManager.git.add("-A");
+                                    }
+                                    const diff = this.gitManager instanceof SimpleGit
+                                        ? await this.gitManager.git.diff(["--cached"])
+                                        : "";
             
                                     this.log("AI commit message: diff 长度 - diff length:", diff?.length || 0);
             
