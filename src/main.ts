@@ -503,24 +503,32 @@ export default class ObsidianGit extends Plugin {
             }
 
             if (unstagedFiles.length + stagedFiles.length !== 0 || hadConflict) {
-                let cmtMessage = commitMessage;
+                            let cmtMessage = commitMessage;
 
-                // AI 生成提交消息（仅在用户未指定消息时） - AI generate commit message (only when no user-specified message)
-                if (!cmtMessage && this.settings.aiApiKey) {
-                    try {
-                        // 获取所有更改（包括 staged 和 unstaged）
-                            // Get all changes (including staged and unstaged)
-                            const diff = this.gitManager instanceof SimpleGit
-                                ? await this.gitManager.git.diff(["HEAD"])
-                                : "";
-                        if (diff) {
-                            cmtMessage = await this.aiCommitGenerator.generate(diff);
-                            this.log("AI commit message: 已生成 - Generated");
-                        }
-                    } catch (e) {
-                        this.log("AI commit message: 生成失败，使用模板 - Generation failed, using template", e);
-                    }
-                }
+                            // AI 生成提交消息（仅在用户未指定消息时） - AI generate commit message (only when no user-specified message)
+                            if (!cmtMessage && this.settings.aiApiKey) {
+                                try {
+                                    this.log("AI commit message: 开始生成 - Starting generation");
+                                    this.log("AI commit message: API Key 配置 - API Key configured:", !!this.settings.aiApiKey);
+            
+                                    const diff = this.gitManager instanceof SimpleGit
+                                        ? await this.gitManager.git.diff(["HEAD"])
+                                        : "";
+            
+                                    this.log("AI commit message: diff 长度 - diff length:", diff?.length || 0);
+            
+                                    if (diff) {
+                                        cmtMessage = await this.aiCommitGenerator.generate(diff);
+                                        this.log("AI commit message: 已生成 - Generated:", cmtMessage?.substring(0, 50));
+                                    } else {
+                                        this.log("AI commit message: diff 为空，跳过 - diff is empty, skipping");
+                                    }
+                                } catch (e) {
+                                    this.log("AI commit message: 生成失败，使用模板 - Generation failed, using template", e);
+                                }
+                            } else {
+                                this.log("AI commit message: 跳过 - Skipped, cmtMessage:", !!cmtMessage, "aiApiKey:", !!this.settings.aiApiKey);
+                            }
 
                 // 回退到模板消息 - Fallback to template message
                 if (!cmtMessage) {
