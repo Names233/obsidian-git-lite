@@ -503,6 +503,45 @@ export class ObsidianGitSettingsTab extends PluginSettingTab {
                     });
                 });
 
+        // ── AI 配置 - AI Configuration ──
+        new Setting(containerEl).setName("AI 配置").setHeading();
+
+        new Setting(containerEl)
+            .setName("API Base URL")
+            .setDesc("OpenAI 兼容 API 的基础 URL")
+            .addText((text) => {
+                text.setValue(plugin.settings.aiBaseUrl)
+                    .setPlaceholder("https://api.openai.com")
+                    .onChange(async (value) => {
+                        plugin.settings.aiBaseUrl = value;
+                        await plugin.saveSettings();
+                    });
+            });
+
+        new Setting(containerEl)
+            .setName("API Key")
+            .setDesc("API 密钥")
+            .addText((text) => {
+                text.inputEl.type = "password";
+                text.setValue(plugin.settings.aiApiKey)
+                    .onChange(async (value) => {
+                        plugin.settings.aiApiKey = value;
+                        await plugin.saveSettings();
+                    });
+            });
+
+        new Setting(containerEl)
+            .setName("AI 模型")
+            .setDesc("用于生成 commit message 的模型名称")
+            .addText((text) => {
+                text.setValue(plugin.settings.aiModel)
+                    .setPlaceholder("gpt-4o-mini")
+                    .onChange(async (value) => {
+                        plugin.settings.aiModel = value;
+                        await plugin.saveSettings();
+                    });
+            });
+
         // ── 高级设置 - Advanced settings ──
         new Setting(containerEl)
             .setName("高级设置")
