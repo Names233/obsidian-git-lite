@@ -508,9 +508,11 @@ export default class ObsidianGit extends Plugin {
                 // AI 生成提交消息（仅在用户未指定消息时） - AI generate commit message (only when no user-specified message)
                 if (!cmtMessage && this.settings.aiApiKey) {
                     try {
-                        const diff = this.gitManager instanceof SimpleGit
-                            ? await this.gitManager.git.diff()
-                            : "";
+                        // 获取所有更改（包括 staged 和 unstaged）
+                            // Get all changes (including staged and unstaged)
+                            const diff = this.gitManager instanceof SimpleGit
+                                ? await this.gitManager.git.diff(["HEAD"])
+                                : "";
                         if (diff) {
                             cmtMessage = await this.aiCommitGenerator.generate(diff);
                             this.log("AI commit message: 已生成 - Generated");
