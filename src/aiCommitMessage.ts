@@ -117,7 +117,7 @@ export class AICommitMessageGenerator {
                 messages: [
                     {
                         role: "system",
-                        content: "Generate a concise git commit message. Use Chinese if changes contain Chinese, otherwise English. Max 72 chars. Output ONLY the commit message.",
+                        content: "你是一个笔记提交消息生成器。根据 diff 内容生成简洁的提交消息。只关注笔记内容的变化，忽略配置文件（如 .obsidian/ 下的文件）。如果主要变更是配置文件，返回「更新配置」。使用中文。最多72个字符。只输出提交消息，不要其他内容。",
                     },
                     {
                         role: "user",
