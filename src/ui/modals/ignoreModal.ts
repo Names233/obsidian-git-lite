@@ -21,7 +21,7 @@ export class IgnoreModal extends Modal {
 
     onOpen() {
         const { contentEl, titleEl } = this;
-        titleEl.setText("Edit .gitignore");
+        titleEl.setText("编辑 .gitignore");
         const div = contentEl.createDiv();
 
         const text = div.createEl("textarea", {
@@ -32,7 +32,7 @@ export class IgnoreModal extends Modal {
 
         div.createEl("button", {
             cls: ["mod-cta", "obsidian-git-center-button"],
-            text: "Save",
+            text: "保存",
         }).addEventListener("click", () => {
             this.resolve!(text.value);
             this.close();

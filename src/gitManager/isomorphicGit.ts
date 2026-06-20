@@ -76,13 +76,13 @@ export class IsomorphicGit extends GitManager {
                 password: this.plugin.localStorage.getPassword() ?? undefined,
             }),
             onAuthFailure: async () => {
-                new Notice("Authentication failed. Please try with different credentials");
+                new Notice("认证失败。请使用其他凭据重试。");
                 const username = await new GeneralModal(this.plugin, {
-                    placeholder: "Specify your username",
+                    placeholder: "请输入用户名",
                 }).openAndGetResult();
                 if (username) {
                     const password = await new GeneralModal(this.plugin, {
-                        placeholder: "Specify your password/personal access token",
+                        placeholder: "请输入密码或个人访问令牌",
                         obscure: true,
                     }).openAndGetResult();
                     if (password) {
@@ -139,7 +139,7 @@ export class IsomorphicGit extends GitManager {
     async status(opts?: { path?: string }): Promise<Status> {
         let notice: Notice | undefined;
         const timeout = window.setTimeout(() => {
-            notice = new Notice("This takes longer: Getting status", this.noticeLength);
+            notice = new Notice("获取状态耗时较长，请稍候...", this.noticeLength);
         }, 20000);
         try {
             this.plugin.setPluginState({ gitAction: CurrentGitAction.status });
@@ -223,7 +223,7 @@ export class IsomorphicGit extends GitManager {
      * Performs fetch + merge operation
      */
     async pull(): Promise<FileStatusResult[]> {
-        const progressNotice = this.showNotice("Initializing pull");
+        const progressNotice = this.showNotice("正在初始化拉取");
         try {
             this.plugin.setPluginState({ gitAction: CurrentGitAction.pull });
             const localCommit = await this.resolveRef("HEAD");
@@ -265,7 +265,7 @@ export class IsomorphicGit extends GitManager {
                     ...this.getRepo(),
                     ref: branchInfo.current,
                     onProgress: (progress) => {
-                        progressNotice?.setMessage(this.getProgressText("Checkout", progress));
+                        progressNotice?.setMessage(this.getProgressText("检出", progress));
                     },
                     remote: branchInfo.remote,
                 }));
@@ -274,7 +274,7 @@ export class IsomorphicGit extends GitManager {
 
             const upstreamCommit = await this.resolveRef("HEAD");
             const changedFiles = await this.getFileChangesCount(localCommit, upstreamCommit);
-            this.showNotice("Finished pull", false);
+            this.showNotice("拉取完成", false);
 
             return changedFiles.map<FileStatusResult>((file) => ({
                 path: file.path,
@@ -301,7 +301,7 @@ export class IsomorphicGit extends GitManager {
      */
     async push(): Promise<number> {
         if (!(await this.canPush())) return 0;
-        const progressNotice = this.showNotice("Initializing push");
+        const progressNotice = this.showNotice("正在初始化推送");
         try {
             this.plugin.setPluginState({ gitAction: CurrentGitAction.status });
             const status = await this.branchInfo();
@@ -315,7 +315,7 @@ export class IsomorphicGit extends GitManager {
                 ...this.getRepo(),
                 remote,
                 onProgress: (progress) => {
-                    progressNotice?.setMessage(this.getProgressText("Pushing", progress));
+                    progressNotice?.setMessage(this.getProgressText("推送", progress));
                 },
             }));
             progressNotice?.hide();
@@ -408,12 +408,12 @@ export class IsomorphicGit extends GitManager {
      * 从远程获取更改 - Fetch from remote
      */
     private async fetch(remote?: string): Promise<void> {
-        const progressNotice = this.showNotice("Initializing fetch");
+        const progressNotice = this.showNotice("正在初始化获取");
         try {
             await this.wrapFS(git.fetch({
                 ...this.getRepo(),
                 onProgress: (progress: GitProgressEvent) => {
-                    progressNotice?.setMessage(this.getProgressText("Fetching", progress));
+                    progressNotice?.setMessage(this.getProgressText("获取", progress));
                 },
                 remote: remote ?? (await this.getCurrentRemote()),
             }));
@@ -477,7 +477,7 @@ export class IsomorphicGit extends GitManager {
     private async getUnstagedFiles(base = ".") {
         let notice: Notice | undefined;
         const timeout = window.setTimeout(() => {
-            notice = new Notice("This takes longer: Getting status", this.noticeLength);
+            notice = new Notice("获取状态耗时较长，请稍候...", this.noticeLength);
         }, 20000);
         try {
             const repo = this.getRepo();
@@ -559,7 +559,7 @@ export class IsomorphicGit extends GitManager {
         const name = await this.getConfig("user.name");
         const email = await this.getConfig("user.email");
         if (!name || !email) {
-            throw Error("Git author name and email are not set. Please set both fields in the settings.");
+            throw Error("Git 提交作者名称和邮箱未设置。请在设置中填写这两项。");
         }
     }
 
@@ -576,11 +576,11 @@ export class IsomorphicGit extends GitManager {
      * 格式化进度文本 - Format progress text
      */
     private getProgressText(action: string, event: GitProgressEvent): string {
-        let out = `${action} progress:`;
+        let out = `${action}进度:`;
         if (event.phase) out = `${out} ${event.phase}:`;
         if (event.loaded) {
             out = `${out} ${event.loaded}`;
-            if (event.total) out = `${out} of ${event.total}`;
+            if (event.total) out = `${out}/${event.total}`;
         }
         return out;
     }

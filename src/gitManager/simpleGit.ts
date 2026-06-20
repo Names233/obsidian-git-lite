@@ -59,7 +59,7 @@ export class SimpleGit extends GitManager {
                 if (exists) {
                     basePath = path.join(vaultBasePath, this.plugin.settings.basePath);
                 } else if (!ignoreError) {
-                    new Notice("ObsidianGit: Base path does not exist");
+                    new Notice("ObsidianGit: 基础路径不存在");
                 }
             }
             this.absoluteRepoPath = basePath;
@@ -247,7 +247,7 @@ export class SimpleGit extends GitManager {
                         }
                     } catch (err) {
                         this.plugin.displayError(
-                            `Pull failed (${this.plugin.settings.syncMethod}): ${"message" in err ? err.message : err}`
+                            `拉取失败 (${this.plugin.settings.syncMethod}): ${"message" in err ? err.message : err}`
                         );
                         return;
                     }
@@ -258,7 +258,7 @@ export class SimpleGit extends GitManager {
                         ]);
                     } catch (err) {
                         this.plugin.displayError(
-                            `Sync failed (${this.plugin.settings.syncMethod}): ${"message" in err ? err.message : err}`
+                            `同步失败 (${this.plugin.settings.syncMethod}): ${"message" in err ? err.message : err}`
                         );
                     }
                 }
@@ -424,7 +424,7 @@ export class SimpleGit extends GitManager {
                 if (data.contains("Username for")) obscure = false;
                 const response = await new GeneralModal(this.plugin, {
                     allowEmpty: true, obscure,
-                    placeholder: data.length > 60 ? "Enter a response to the message." : data,
+                    placeholder: data.length > 60 ? "请输入对消息的回复。" : data,
                 }).openAndGetResult();
                 notice?.hide();
                 if (await adapter.exists(triggerFilePath)) {
@@ -435,7 +435,7 @@ export class SimpleGit extends GitManager {
             this.plugin.displayError(error);
             await fsPromises.rm(path.join(this.absPluginConfigPath, ASK_PASS_SCRIPT_FILE), { force: true });
             await new Promise((res) => window.setTimeout(res, 5000));
-            this.plugin.log("Retry watch for ask pass");
+            this.plugin.log("重试 askpass 监控");
             await this.askpass();
         }
     }
@@ -469,7 +469,7 @@ export class SimpleGit extends GitManager {
         if (command.error) {
             if (Platform.isWin && !gitPath) {
                 this.plugin.log(
-                    `Git not found in PATH. Checking standard installation path(${DEFAULT_WIN_GIT_PATH})`
+                    `Git 未在 PATH 中找到。正在检查标准安装路径 (${DEFAULT_WIN_GIT_PATH})`
                 );
                 const cmd = await spawnAsync(DEFAULT_WIN_GIT_PATH, ["--version"]);
                 if (cmd.error) { console.error(cmd.error); return false; }

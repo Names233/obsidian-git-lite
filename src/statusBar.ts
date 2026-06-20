@@ -86,7 +86,7 @@ export class StatusBar {
         if (this.plugin.localStorage.getConflict()) {
             setIcon(this.conflictEl, "alert-circle");
             this.conflictEl.ariaLabel =
-                "You have merge conflicts. Resolve them and commit afterwards.";
+                "存在合并冲突。请解决冲突后再提交。";
             this.conflictEl.style.marginRight = "5px";
             this.conflictEl.addClass(this.base + "conflict");
         } else {
@@ -97,7 +97,7 @@ export class StatusBar {
         if (this.plugin.localStorage.getPausedAutomatics()) {
             setIcon(this.pausedEl, "pause-circle");
             this.pausedEl.ariaLabel =
-                "Automatic routines are currently paused.";
+                "自动任务当前已暂停。";
             this.pausedEl.style.marginRight = "5px";
             this.pausedEl.addClass(this.base + "paused");
         } else {
@@ -110,32 +110,32 @@ export class StatusBar {
                 this.displayFromNow();
                 break;
             case CurrentGitAction.status:
-                this.statusBarEl.ariaLabel = "Checking repository status...";
+                this.statusBarEl.ariaLabel = "正在检查仓库状态...";
                 setIcon(this.iconEl, "refresh-cw");
                 this.statusBarEl.addClass(this.base + "status");
                 break;
             case CurrentGitAction.add:
-                this.statusBarEl.ariaLabel = "Adding files...";
+                this.statusBarEl.ariaLabel = "正在添加文件...";
                 setIcon(this.iconEl, "archive");
                 this.statusBarEl.addClass(this.base + "add");
                 break;
             case CurrentGitAction.commit:
-                this.statusBarEl.ariaLabel = "Committing changes...";
+                this.statusBarEl.ariaLabel = "正在提交更改...";
                 setIcon(this.iconEl, "git-commit");
                 this.statusBarEl.addClass(this.base + "commit");
                 break;
             case CurrentGitAction.push:
-                this.statusBarEl.ariaLabel = "Pushing changes...";
+                this.statusBarEl.ariaLabel = "正在推送更改...";
                 setIcon(this.iconEl, "upload");
                 this.statusBarEl.addClass(this.base + "push");
                 break;
             case CurrentGitAction.pull:
-                this.statusBarEl.ariaLabel = "Pulling changes...";
+                this.statusBarEl.ariaLabel = "正在拉取更改...";
                 setIcon(this.iconEl, "download");
                 this.statusBarEl.addClass(this.base + "pull");
                 break;
             default:
-                this.statusBarEl.ariaLabel = "Failed on initialization!";
+                this.statusBarEl.ariaLabel = "初始化失败！";
                 setIcon(this.iconEl, "alert-triangle");
                 this.statusBarEl.addClass(this.base + "failed-init");
                 break;
@@ -148,16 +148,16 @@ export class StatusBar {
         if (timestamp) {
             const fromNow = moment(timestamp).fromNow();
             this.statusBarEl.ariaLabel = `${
-                offlineMode ? "Offline: " : ""
-            }Last Commit: ${fromNow}`;
+                offlineMode ? "离线: " : ""
+            }上次提交: ${fromNow}`;
 
             if ((this.unPushedCommits ?? 0) > 0) {
-                this.statusBarEl.ariaLabel += `\n(${this.unPushedCommits} unpushed commits)`;
+                this.statusBarEl.ariaLabel += `\n(${this.unPushedCommits} 个未推送的提交)`;
             }
         } else {
             this.statusBarEl.ariaLabel = offlineMode
-                ? "Git is offline"
-                : "Git is ready";
+                ? "Git 离线"
+                : "Git 就绪";
         }
 
         if (offlineMode) {
