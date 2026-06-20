@@ -1,10 +1,10 @@
 {
-    "author": "Vinzent",
-    "authorUrl": "https://github.com/Vinzent03",
-    "id": "obsidian-git",
-    "name": "Git",
-    "description": "Integrate Git version control with automatic backup and other advanced features.",
+    "author": "Names233",
+    "authorUrl": "https://github.com/Names233",
+    "id": "git-auto-sync",
+    "name": "Git Auto Sync",
+    "description": "Automatically sync your Obsidian vault to GitHub with AI-generated commit messages.",
     "isDesktopOnly": false,
-    "fundingUrl": "https://ko-fi.com/vinzent",
-    "version": "2.38.5"
+    "version": "0.1.0",
+    "minAppVersion": "0.15.0"
 }

@@ -47,6 +47,9 @@ export abstract class GitManager {
     // 获取分支信息 - Get branch info
     abstract branchInfo(): Promise<BranchInfo>;
 
+    // 检查 Git 环境是否就绪 - Check if git environment is ready
+    abstract checkRequirements(): Promise<"valid" | "missing-git" | "missing-repo">;
+
     // 卸载清理 - Unload cleanup
     unload(): void {}
 

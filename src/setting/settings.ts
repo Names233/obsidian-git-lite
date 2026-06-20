@@ -249,7 +249,7 @@ export class ObsidianGitSettingsTab extends PluginSettingTab {
             .setHeading();
 
         // 推送开关 - Push toggle
-        setting = new Setting(containerEl)
+        const pushSetting = new Setting(containerEl)
             .setName("Push on commit-and-sync")
             .setDesc(
                 `Most of the time you want to push after committing. Turning this off turns a commit-and-sync action into commit ${plugin.settings.pullBeforePush ? "and pull " : ""}only. It will still be called commit-and-sync.`
