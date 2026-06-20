@@ -117,17 +117,11 @@ export class AICommitMessageGenerator {
                 messages: [
                     {
                         role: "system",
-                        content:
-                            "You are a commit message generator. " +
-                            "Given a git diff, produce a single concise commit message. " +
-                            "Auto-detect the language of the diff content (Chinese or English) and respond in the same language. " +
-                            "Keep the message under 72 characters. " +
-                            "Use conventional commit format when appropriate. " +
-                            "Output ONLY the commit message, nothing else.",
+                        content: "Generate a concise git commit message. Use Chinese if changes contain Chinese, otherwise English. Max 72 chars. Output ONLY the commit message.",
                     },
                     {
                         role: "user",
-                        content: `Generate a commit message for this diff:\n\n${diff}`,
+                        content: diff,
                     },
                 ],
                 temperature: 0.3,
@@ -159,11 +153,14 @@ export class AICommitMessageGenerator {
 
             // 解析响应 - Parse response
             const data = response.json as {
-                choices?: Array<{ message?: { content?: string } }>;
+                choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
             };
 
             // 提取消息内容 - Extract message content
-            const content = data.choices?.[0]?.message?.content?.trim();
+            // MiMo 模型使用 reasoning 模式时，内容可能在 reasoning_content 中
+            // MiMo model uses reasoning mode, content may be in reasoning_content
+            const content = data.choices?.[0]?.message?.content?.trim() ||
+                           data.choices?.[0]?.message?.reasoning_content?.trim();
             if (!content) {
                 console.error("AI commit message: API 返回空内容 - API returned empty content");
                 return null;
