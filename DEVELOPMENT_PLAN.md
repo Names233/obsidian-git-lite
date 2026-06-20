@@ -227,9 +227,27 @@ interface GitAutoSyncSettings {
 
 ### Phase 2: 核心模块
 1. 实现 `aiCommitMessage.ts`
-2. 实现 `triggerManager.ts`
-3. 实现 `conflictView.ts`
+   - 优化 Prompt 使其简短，不超过 4KB
+   - AI 自动检测语言（中文/英文）
+   - 超时 10 秒，失败 fallback 到默认消息
+   - 相同 diff 缓存 60 秒避免重复调用
+
+2. 实现 `triggerManager.ts`（替换现有 automaticsManager）
+   - 15min 无文件修改 → 自动同步（debounce）
+   - 切换到其他页面 → 自动同步（workspace blur 事件）
+   - 网络断开时暂停触发器（navigator.onLine）
+   - 处理 Obsidian suspend/resume 事件
+
+3. 实现 `conflictView.ts`（Obsidian Modal）
+   - 显示冲突文件列表和冲突类型
+   - 用户手动解决后触发 commit-and-sync
+
 4. 重写 `main.ts` 主流程
+   - 使用新的 triggerManager 替换 automaticsManager
+   - 集成 aiCommitMessage
+
+5. 更新 `settings.ts`
+   - 添加 AI 配置项 UI（api_url, api_key, model）
 
 ### Phase 3: UI
 1. 精简设置页

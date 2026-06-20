@@ -82,7 +82,7 @@ export class ObsidianGitSettingsTab extends PluginSettingTab {
                             plugin.settings.autoCommitEnabled = value;
                             await plugin.saveSettings();
                             // 重新加载自动任务 - Reload automatics
-                            plugin.automaticsManager.reload("commit");
+                            plugin.triggerManager.reload("commit");
                             this.refreshDisplayWithDelay();
                         })
                 );
@@ -111,7 +111,7 @@ export class ObsidianGitSettingsTab extends PluginSettingTab {
                                 DEFAULT_SETTINGS.idleTimeout;
                         }
                         await plugin.saveSettings();
-                        plugin.automaticsManager.reload("commit");
+                        plugin.triggerManager.reload("commit");
                     });
                 });
             // 自动提交禁用时灰显 - Grey out when auto commit is disabled

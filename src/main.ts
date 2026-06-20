@@ -8,7 +8,8 @@ import { debounce, Notice, Platform, Plugin } from "obsidian";
 import { PromiseQueue } from "src/promiseQueue";
 import { ObsidianGitSettingsTab } from "src/setting/settings";
 import { StatusBar } from "src/statusBar";
-import AutomaticsManager from "./automaticsManager";
+import TriggerManager from "./triggerManager";
+import { AICommitMessageGenerator } from "./aiCommitMessage";
 import { CONFLICT_OUTPUT_FILE } from "./constants";
 import type { GitManager } from "./gitManager/gitManager";
 import { IsomorphicGit } from "./gitManager/isomorphicGit";
@@ -44,8 +45,10 @@ import { BranchStatusBar } from "./ui/statusBar/branchStatusBar";
 export default class ObsidianGit extends Plugin {
     // Git 管理器实例 - Git manager instance
     gitManager: GitManager;
-    // 自动化管理器 - Automatics manager
-    automaticsManager = new AutomaticsManager(this);
+    // 触发管理器 - Trigger manager (replaces AutomaticsManager)
+    triggerManager = new TriggerManager(this);
+    // AI 提交消息生成器 - AI commit message generator
+    aiCommitGenerator = new AICommitMessageGenerator(this);
     // 本地存储设置 - Local storage settings
     localStorage = new LocalStorageSettings(this);
     // 插件设置 - Plugin settings
@@ -206,7 +209,7 @@ export default class ObsidianGit extends Plugin {
     /** 卸载插件资源 - Unload plugin resources */
     unloadPlugin() {
         this.gitReady = false;
-        this.automaticsManager.unload();
+        this.triggerManager.unload();
         this.branchBar?.remove();
         this.statusBar?.remove();
         this.statusBar = undefined;
@@ -310,7 +313,7 @@ export default class ObsidianGit extends Plugin {
 
                     // 初始化自动任务 - Initialize automatics
                     if (!pausedAutomatics) {
-                        await this.automaticsManager.init();
+                        await this.triggerManager.init();
                     }
                     if (pausedAutomatics) {
                         new Notice("自动任务当前已暂停。");
@@ -452,9 +455,29 @@ export default class ObsidianGit extends Plugin {
             }
 
             if (unstagedFiles.length + stagedFiles.length !== 0 || hadConflict) {
-                let cmtMessage = (commitMessage ??= fromAuto
-                    ? this.settings.autoCommitMessage
-                    : this.settings.commitMessage);
+                let cmtMessage = commitMessage;
+
+                // AI 生成提交消息（仅在用户未指定消息时） - AI generate commit message (only when no user-specified message)
+                if (!cmtMessage && this.settings.aiApiKey) {
+                    try {
+                        const diff = this.gitManager instanceof SimpleGit
+                            ? await this.gitManager.git.diff()
+                            : "";
+                        if (diff) {
+                            cmtMessage = await this.aiCommitGenerator.generate(diff);
+                            this.log("AI commit message: 已生成 - Generated");
+                        }
+                    } catch (e) {
+                        this.log("AI commit message: 生成失败，使用模板 - Generation failed, using template", e);
+                    }
+                }
+
+                // 回退到模板消息 - Fallback to template message
+                if (!cmtMessage) {
+                    cmtMessage = fromAuto
+                        ? this.settings.autoCommitMessage
+                        : this.settings.commitMessage;
+                }
 
                 if ((fromAuto && this.settings.customMessageOnAutoBackup) || requestCustomMessage) {
                     if (!this.settings.disablePopups && fromAuto) {
