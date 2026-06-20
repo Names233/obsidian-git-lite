@@ -125,10 +125,10 @@ export class AICommitMessageGenerator {
                     },
                 ],
                 temperature: 0.3,
-                max_tokens: 100,
+                max_tokens: 300, // MiMo reasoning 模式需要更多 token
             };
 
-            this.plugin.log("AI commit message: 正在调用 API - Calling API...");
+            this.plugin.log(`AI commit message: 正在调用 API - Calling API... endpoint=${endpoint}, model=${model}, max_tokens=${body.max_tokens}`);
 
             // 使用 Obsidian requestUrl 避免 CORS 问题
             // Use Obsidian requestUrl to avoid CORS issues
@@ -141,7 +141,10 @@ export class AICommitMessageGenerator {
                 },
                 body: JSON.stringify(body),
                 throw: false,
+                timeout: REQUEST_TIMEOUT_MS,
             });
+
+            this.plugin.log(`AI commit message: API 响应状态 - API response status: ${response.status}`);
 
             // 检查响应状态 - Check response status
             if (response.status >= 400) {
@@ -156,6 +159,8 @@ export class AICommitMessageGenerator {
                 choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
             };
 
+            this.plugin.log(`AI commit message: API 响应数据 - API response data: ${JSON.stringify(data).substring(0, 500)}`);
+
             // 提取消息内容 - Extract message content
             // MiMo 模型使用 reasoning 模式时，内容可能在 reasoning_content 中
             // MiMo model uses reasoning mode, content may be in reasoning_content
@@ -166,7 +171,7 @@ export class AICommitMessageGenerator {
                 return null;
             }
 
-            this.plugin.log("AI commit message: API 调用成功 - API call successful");
+            this.plugin.log(`AI commit message: API 调用成功 - API call successful, content=${content}`);
             return content;
         } catch (error) {
             // 处理请求错误 - Handle request errors
