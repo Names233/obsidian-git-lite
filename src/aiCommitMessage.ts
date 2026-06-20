@@ -162,10 +162,9 @@ export class AICommitMessageGenerator {
             this.plugin.log(`AI commit message: API 响应数据 - API response data: ${JSON.stringify(data).substring(0, 500)}`);
 
             // 提取消息内容 - Extract message content
-            // MiMo 模型使用 reasoning 模式时，内容可能在 reasoning_content 中
-            // MiMo model uses reasoning mode, content may be in reasoning_content
-            const content = data.choices?.[0]?.message?.content?.trim() ||
-                           data.choices?.[0]?.message?.reasoning_content?.trim();
+            // 只使用 content 字段，reasoning_content 包含推理过程不适合做 commit message
+            // Only use content field, reasoning_content contains reasoning process not suitable for commit message
+            const content = data.choices?.[0]?.message?.content?.trim();
             if (!content) {
                 console.error("AI commit message: API 返回空内容 - API returned empty content");
                 return null;
