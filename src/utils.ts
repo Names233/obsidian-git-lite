@@ -2,7 +2,6 @@ import * as cssColorConverter from "css-color-converter";
 import { spawn, type SpawnOptionsWithoutStdio } from "child_process";
 import type { App, ItemView, RGB, WorkspaceLeaf } from "obsidian";
 import { Keymap, Menu, moment, TFile } from "obsidian";
-import { BINARY_EXTENSIONS } from "./constants";
 
 export function assertNever(x: never): never {
     // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
@@ -174,18 +173,6 @@ export function formatMinutes(minutes: number): string {
 export function getExtensionFromPath(path: string): string {
     const dotIndex = path.lastIndexOf(".");
     return path.substring(dotIndex + 1);
-}
-
-/**
- * Decides if a file is binary based on its extension.
- */
-export function fileIsBinary(path: string): boolean {
-    // This is the case for the most files so we can save some time
-    if (path.endsWith(".md")) return false;
-
-    const ext = getExtensionFromPath(path);
-
-    return BINARY_EXTENSIONS.includes(ext);
 }
 
 export function formatRemoteUrl(url: string): string {

@@ -1,232 +1,43 @@
-import type { LineAuthorSettings } from "src/editor/lineAuthor/model";
+// 类型定义文件 - Type definitions
+// 只保留 Git Auto Sync 核心功能所需的类型
 
-export interface ObsidianGitSettings {
-    commitMessage: string;
-    autoCommitMessage: string;
-    commitMessageScript: string;
-    commitDateFormat: string;
-    /**
-     * Interval to either automatically commit-and-sync or just commit
-     */
-    autoSaveInterval: number;
-    autoPushInterval: number;
-    autoPullInterval: number;
-    autoPullOnBoot: boolean;
-    autoCommitOnlyStaged: boolean;
-    syncMethod: SyncMethod;
-    mergeStrategy: MergeStrategy;
-    /**
-     * Whether to push on commit-and-sync
-     */
-    disablePush: boolean;
-    /**
-     * Whether to pull on commit-and-sync
-     */
-    pullBeforePush: boolean;
-    /**
-     * Whether messages from {@link ObsidianGit.displayMessage} should be shown
-     */
-    disablePopups: boolean;
-    /**
-     * Whether messages from {@link ObsidianGit.displayError} should be shown
-     */
-    showErrorNotices: boolean;
-    disablePopupsForNoChanges: boolean;
-    listChangedFilesInMessageBody: boolean;
-    showStatusBar: boolean;
-    updateSubmodules: boolean;
-    submoduleRecurseCheckout: boolean;
-    /**
-     * @deprecated Using `localstorage` instead
-     */
-    gitPath?: string;
-    customMessageOnAutoBackup: boolean;
-    autoBackupAfterFileChange: boolean;
-    treeStructure: boolean;
-    /**
-     * @deprecated Using `localstorage` instead
-     */
-    username?: string;
-    differentIntervalCommitAndPush: boolean;
-    changedFilesInStatusBar: boolean;
-
-    /**
-     * @deprecated Migrated to `syncMethod = 'merge'`
-     */
-    mergeOnPull?: boolean;
-    refreshSourceControl: boolean;
-    basePath: string;
-    showedMobileNotice: boolean;
-    refreshSourceControlTimer: number;
-    showBranchStatusBar: boolean;
-    lineAuthor: LineAuthorSettings;
-    setLastSaveToLastCommit: boolean;
-    gitDir: string;
-    showFileMenu: boolean;
-    authorInHistoryView: ShowAuthorInHistoryView;
-    dateInHistoryView: boolean;
-    diffStyle: "git_unified" | "split";
-    hunks: {
-        hunkCommands: boolean;
-        showSigns: boolean;
-        statusBar: "disabled" | "colored" | "monochrome";
-    };
-}
-
-/**
- * Ensures, that nested values objects are correctly merged.
- */
-export function mergeSettingsByPriority(
-    low: Omit<ObsidianGitSettings, "autoCommitMessage">,
-    high: ObsidianGitSettings
-): ObsidianGitSettings {
-    const lineAuthor = Object.assign({}, low.lineAuthor, high.lineAuthor);
-    return Object.assign({}, low, high, { lineAuthor });
-}
-
+// 同步方法 - Sync method
 export type SyncMethod = "rebase" | "merge" | "reset";
 
+// 合并策略 - Merge strategy
 export type MergeStrategy = "none" | "ours" | "theirs";
 
-export type ShowAuthorInHistoryView = "full" | "initials" | "hide";
-
+// 作者信息 - Author info
 export interface Author {
     name: string;
     email: string;
 }
 
+// Git 状态 - Git status
 export interface Status {
     all: FileStatusResult[];
     changed: FileStatusResult[];
     staged: FileStatusResult[];
-
-    /*
-     * Only available for `SimpleGit` gitManager
-     */
     conflicted: string[];
 }
 
-export interface GitTimestamp {
-    /**
-     * The number of unix seconds since epoch time (UTC).
-     */
-    epochSeconds: number;
-    /**
-     * The time zone, in which the commit was originally created.
-     * This can be used to reconstruct the local time during creating time.
-     */
-    tz: string;
-}
-
-export interface UserEmail {
-    name: string;
-    email: string;
-}
-
-export interface BlameCommit {
-    hash: string;
-    author?: UserEmail & GitTimestamp;
-    committer?: UserEmail & GitTimestamp;
-    previous?: { commitHash?: string; filename: string };
-    filename?: string;
-    summary: string;
-    isZeroCommit: boolean; // true, if hash is 000...000
-}
-
-/**
- * See https://git-scm.com/docs/git-blame#_the_porcelain_format
- */
-export interface Blame {
-    commits: Map<string, BlameCommit>;
-    /**
-     * hashPerLine[i] is the commit hash where line i originates from
-     *
-     * The first element is always `undefined`, since line-numbers are 1-based.
-     */
-    hashPerLine: string[];
-    /**
-     * originalFileLineNrPerLine[i] contains the original files' line number from where line i
-     *
-     * The first element is always `undefined`, since line-numbers are 1-based.originated
-     */
-    originalFileLineNrPerLine: number[];
-    /**
-     * finalFileLineNrPerLine[i] contains the final files' line number from where line i originated
-     *
-     * The first element is always `undefined`, since line-numbers are 1-based.
-     */
-    finalFileLineNrPerLine: number[];
-    /**
-     * For each line i, which originates from a different commit than it's previous line,
-     * groupSizePerStartingLine[i] contains the number of lines until either the next
-     * group of lines or EOF is reached.
-     */
-    groupSizePerStartingLine: Map<number, number>;
-}
-
-/**
- * `index` and `working_dir` are each one-character codes, based off the git
- * status short format: git status --short
- * The following is from: https://www.git-scm.com/docs/git-status#_short_format
- *
- * The possible values are:
- * - ' ': unmodified
- * - M  : modified
- * - T  : file type changed
- * - A  : added
- * - D  : deleted
- * - R  : renamed
- * - C  : copied
- * - U  : updated but unmerged
- *
- *  index            working_dir            Meaning
- * ------------------------------------------------------------------------
- *                    [AMD]                 not updated
- *    M               [ MTD]                updated in index
- *    T               [ MTD]                type changed in index
- *    A               [ MTD]                added to index
- *    D                                     deleted from index
- *    R               [ MTD]                renamed in index
- *    C               [ MTD]                copied in index
- * [MTARC]                                  index and work tree match
- * [ MTARC]              M                  work tree changed since index
- * [ MTARC]              T                  type changed in work tree since index
- * [ MTARC]              D                  deleted in work tree
- *                       R                  renamed in work tree
- *                       C                  copied in work tree
- *    D                  D                  unmerged, both deleted
- *    A                  U                  unmerged, added by us
- *    U                  D                  unmerged, deleted by them
- *    U                  A                  unmerged, added by them
- *    D                  U                  unmerged, deleted by us
- *    A                  A                  unmerged, both added
- *    U                  U                  unmerged, both modified
- *    ?                  ?                  untracked
- *    !                  !                  ignored
- *
- *
- * FileStatusResult is based off simple-git's FileStatusResult:
- * https://github.com/steveukx/git-js/blob/a569868d800a0d872e8fb1534bb0dceccff47a4f/typings/response.d.ts#L267
- */
+// 文件状态结果 - File status result
+// 基于 git status --short 格式
 export interface FileStatusResult {
     path: string;
     vaultPath: string;
     from?: string;
-
-    // First digit of the status code of the file, e.g. 'M' = modified.
-    // Represents the status of the index if no merge conflicts, otherwise represents
-    // status of one side of the merge.
-    index: string;
-    // Second digit of the status code of the file. Represents status of the working directory
-    // if no merge conflicts, otherwise represents status of other side of a merge.
-    workingDir: string;
+    index: string;      // 索引状态 - Index status
+    workingDir: string; // 工作目录状态 - Working directory status
 }
 
+// 插件状态 - Plugin state
 export interface PluginState {
     offlineMode: boolean;
     gitAction: CurrentGitAction;
 }
 
+// 当前 Git 操作 - Current git action
 export enum CurrentGitAction {
     idle,
     status,
@@ -236,181 +47,102 @@ export enum CurrentGitAction {
     push,
 }
 
-export interface LogEntry {
-    hash: string;
-    date: string;
-    message: string;
-    refs: string[];
-    body: string;
-    diff: DiffEntry;
-    author: {
-        name: string;
-        email: string;
-    };
-}
-
-export interface DiffEntry {
-    changed: number;
-    files: DiffFile[];
-}
-
-export interface DiffFile {
-    path: string;
-    vaultPath: string;
-    fromPath?: string;
-    fromVaultPath?: string;
-    hash: string;
-    status: string;
-    binary?: boolean;
-}
-
-export interface WalkDifference {
-    path: string;
-    type: "M" | "A" | "D";
-}
-
-export type UnstagedFile = WalkDifference;
-
+// 分支信息 - Branch info
 export interface BranchInfo {
     current?: string;
     tracking?: string;
     branches: string[];
 }
 
-export interface TreeItem<T = DiffFile | FileStatusResult> {
-    title: string;
-    path: string;
-    vaultPath: string;
-    data?: T;
-    children?: TreeItem<T>[];
-}
-
-export type RootTreeItem<T> = TreeItem<T> & { children: TreeItem<T>[] };
-
-export type StatusRootTreeItem = RootTreeItem<FileStatusResult>;
-
-export type HistoryRootTreeItem = RootTreeItem<DiffFile>;
-
-export type DiffViewState = {
-    /**
-     * The repo relative file path for a.
-     * For diffing a renamed file, this is the old path.
-     */
-    aFile: string;
-
-    /**
-     * The git ref to specify which state of that file should be shown.
-     * An empty string refers to the index version of a file, so you have to specifically check against undefined.
-     */
-    aRef: string;
-
-    /**
-     * The repo relative file path for b.
-     */
-    bFile: string;
-
-    /**
-     * The git ref to specify which state of that file should be shown.
-     * An empty string refers to the index version of a file, so you have to specifically check against undefined.
-     * `undefined` stands for the working tree version.
-     */
-    bRef?: string;
-};
-
-export enum FileType {
-    staged,
-    changed,
-    pulled,
-}
-
+// 无网络错误 - No network error
 export class NoNetworkError extends Error {
     constructor(public readonly originalError: string) {
         super("No network connection available");
     }
 }
 
-declare module "obsidian" {
-    interface App {
-        openWithDefaultApp(path: string): void;
-        getTheme(): "obsidian" | "moonstone";
-        viewRegistry: ViewRegistry;
-    }
-    interface View {
-        titleEl: HTMLElement;
-        inlineTitleEl: HTMLElement;
-    }
-    interface ViewRegistry {
-        /**
-         * PRIVATE API
-         *
-         * Returns the view type for the given extension if available.
-         */
-        getTypeByExtension(extension: string): string;
-    }
-    interface Workspace {
-        /**
-         * Emitted when some git action has been completed and plugin has been refreshed
-         */
-        on(
-            name: "obsidian-git:refreshed",
-            callback: () => void,
-            ctx?: unknown
-        ): EventRef;
-        /**
-         * Emitted when some git action has been completed and the plugin should refresh
-         */
-        on(
-            name: "obsidian-git:refresh",
-            callback: () => void,
-            ctx?: unknown
-        ): EventRef;
-        /**
-         * Emitted when the plugin is currently loading a new cached status.
-         */
-        on(
-            name: "obsidian-git:loading-status",
-            callback: () => void,
-            ctx?: unknown
-        ): EventRef;
-        /**
-         * Emitted when the HEAD changed.
-         */
-        on(
-            name: "obsidian-git:head-change",
-            callback: () => void,
-            ctx?: unknown
-        ): EventRef;
-        /**
-         * Emitted when a new cached status is available.
-         */
-        on(
-            name: "obsidian-git:status-changed",
-            callback: (status: Status) => void,
-            ctx?: unknown
-        ): EventRef;
+// Git Auto Sync 设置 - Plugin settings
+export interface GitAutoSyncSettings {
+    // ── Git 配置 - Git configuration ──
+    remoteName: string;          // 远程仓库名，默认 "origin" - Remote name, default "origin"
+    branchName: string;          // 分支名，默认当前分支 - Branch name, default current branch
+    basePath: string;            // git 仓库路径，默认 vault 根目录 - Git repo path, default vault root
+    gitDir: string;              // 自定义 .git 目录路径 - Custom .git directory path
 
-        on(
-            name: "obsidian-git:menu",
-            callback: (
-                menu: Menu,
-                path: string,
-                source: string,
-                leaf?: WorkspaceLeaf
-            ) => unknown,
-            ctx?: unknown
-        ): EventRef;
-        trigger(name: string, ...data: unknown[]): void;
-        trigger(name: "obsidian-git:refreshed"): void;
-        trigger(name: "obsidian-git:refresh"): void;
-        trigger(name: "obsidian-git:loading-status"): void;
-        trigger(name: "obsidian-git:head-change"): void;
-        trigger(name: "obsidian-git:status-changed", status: Status): void;
-        trigger(
-            name: "obsidian-git:menu",
-            menu: Menu,
-            path: string,
-            source: string,
-            leaf?: WorkspaceLeaf
-        ): void;
-    }
+    // ── AI 配置 - AI configuration ──
+    aiBaseUrl: string;           // API base URL - API base URL
+    aiApiKey: string;            // API key - API key for AI service
+    aiModel: string;             // 模型名，默认 "gpt-4o-mini" - Model name, default "gpt-4o-mini"
+
+    // ── 自动提交配置 - Auto commit configuration ──
+    autoCommitEnabled: boolean;  // 启用自动提交，默认 true - Enable auto commit, default true
+    idleTimeout: number;         // 空闲超时（分钟），默认 15 - Idle timeout in minutes, default 15
+
+    // ── 同步配置 - Sync configuration ──
+    syncMethod: SyncMethod;      // 同步方法，默认 "rebase" - Sync method, default "rebase"
+    pullBeforePush: boolean;     // 推送前先拉取，默认 true - Pull before push, default true
+    disablePush: boolean;        // 禁用推送，默认 false - Disable push, default false
+    autoPullOnBoot: boolean;     // 启动时自动拉取，默认 false - Auto pull on boot, default false
+    customMessageOnAutoBackup: boolean; // 自动备份时自定义消息，默认 false - Custom message on auto backup, default false
+    updateSubmodules: boolean;   // 更新子模块，默认 false - Update submodules, default false
+
+    // ── 提交消息配置 - Commit message configuration ──
+    commitMessage: string;       // 手动提交消息 - Manual commit message template
+    autoCommitMessage: string;   // 自动提交消息 - Auto commit message template
+    commitDateFormat: string;    // 日期格式 - Date format for {{date}} placeholder
+
+    // ── 通知配置 - Notification configuration ──
+    disablePopups: boolean;              // 禁用通知，默认 false - Disable notifications, default false
+    disablePopupsForNoChanges: boolean;  // 无更改时不通知，默认 true - Hide no-change notifications, default true
+    showErrorNotices: boolean;           // 显示错误通知，默认 true - Show error notices, default true
+
+    // ── UI 配置 - UI configuration ──
+    showStatusBar: boolean;              // 显示状态栏，默认 true - Show status bar, default true
+    showBranchStatusBar: boolean;        // 显示分支状态栏，默认 true - Show branch status bar, default true
+    changedFilesInStatusBar: boolean;    // 状态栏显示更改文件数，默认 false - Show changed files count, default false
+    refreshSourceControl: boolean;       // 自动刷新源代码管理视图 - Auto refresh source control view
+    refreshSourceControlTimer: number;   // 刷新间隔（毫秒） - Refresh interval in milliseconds
 }
+
+// 默认设置 - Default settings
+export const DEFAULT_SETTINGS: GitAutoSyncSettings = {
+    // Git 配置 - Git configuration
+    remoteName: "origin",          // 默认远程仓库名 - Default remote name
+    branchName: "",                // 默认当前分支 - Default current branch
+    basePath: "",                  // 默认 vault 根目录 - Default vault root
+    gitDir: "",                    // 默认 .git 目录 - Default .git directory
+
+    // AI 配置 - AI configuration
+    aiBaseUrl: "https://api.openai.com", // OpenAI API 地址 - OpenAI API base URL
+    aiApiKey: "",                  // API key 为空 - Empty API key
+    aiModel: "gpt-4o-mini",       // 默认模型 - Default model
+
+    // 自动提交配置 - Auto commit configuration
+    autoCommitEnabled: true,       // 默认启用 - Enabled by default
+    idleTimeout: 15,               // 15 分钟空闲后触发 - Trigger after 15 min idle
+
+    // 同步配置 - Sync configuration
+    syncMethod: "rebase",          // 默认变基同步 - Default rebase sync
+    pullBeforePush: true,          // 推送前先拉取 - Pull before push
+    disablePush: false,            // 不禁用推送 - Don't disable push
+    autoPullOnBoot: false,         // 启动时不自动拉取 - Don't auto pull on boot
+    customMessageOnAutoBackup: false, // 不自定义消息 - Don't custom message on auto backup
+    updateSubmodules: false,       // 不更新子模块 - Don't update submodules
+
+    // 提交消息配置 - Commit message configuration
+    commitMessage: "vault backup: {{date}}",       // 手动提交消息模板 - Manual commit message
+    autoCommitMessage: "vault backup: {{date}}",   // 自动提交消息模板 - Auto commit message
+    commitDateFormat: "YYYY-MM-DD HH:mm:ss",       // 日期格式 - Date format
+
+    // 通知配置 - Notification configuration
+    disablePopups: false,          // 不禁用通知 - Don't disable notifications
+    disablePopupsForNoChanges: true, // 无更改时隐藏通知 - Hide no-change notifications
+    showErrorNotices: true,        // 显示错误通知 - Show error notices
+
+    // UI 配置 - UI configuration
+    showStatusBar: true,           // 显示状态栏 - Show status bar
+    showBranchStatusBar: true,     // 显示分支状态栏 - Show branch status bar
+    changedFilesInStatusBar: false, // 不显示更改文件数 - Don't show changed files count
+    refreshSourceControl: true,    // 自动刷新源代码管理 - Auto refresh source control
+    refreshSourceControlTimer: 7000, // 刷新间隔 7 秒 - 7 second refresh interval
+};

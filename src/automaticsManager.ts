@@ -1,270 +1,112 @@
+// 自动任务管理器 - Automatics manager
+// 管理空闲超时后的自动提交功能 - Manages auto-commit after idle timeout
+
 import { debounce } from "obsidian";
 import type ObsidianGit from "./main";
 
 export default class AutomaticsManager {
-    private timeoutIDCommitAndSync?: number;
-    private timeoutIDPush?: number;
-    private timeoutIDPull?: number;
+    // 空闲超时防抖器 - Idle timeout debouncer
+    private idleDebouncer?: ReturnType<typeof debounce>;
 
     constructor(private readonly plugin: ObsidianGit) {}
 
-    private saveLastAuto(date: Date, mode: "backup" | "pull" | "push") {
-        if (mode === "backup") {
-            this.plugin.localStorage.setLastAutoBackup(date.toString());
-        } else if (mode === "pull") {
-            this.plugin.localStorage.setLastAutoPull(date.toString());
-        } else if (mode === "push") {
-            this.plugin.localStorage.setLastAutoPush(date.toString());
-        }
-    }
-
-    private loadLastAuto(): { backup: Date; pull: Date; push: Date } {
-        return {
-            backup: new Date(
-                this.plugin.localStorage.getLastAutoBackup() ?? ""
-            ),
-            pull: new Date(this.plugin.localStorage.getLastAutoPull() ?? ""),
-            push: new Date(this.plugin.localStorage.getLastAutoPush() ?? ""),
-        };
-    }
-
+    /**
+     * 初始化自动任务 - Initialize automatics
+     * 设置空闲超时自动提交 - Set up idle timeout auto commit
+     */
     async init() {
-        await this.setUpAutoCommitAndSync();
-        const lastAutos = this.loadLastAuto();
-
-        if (
-            this.plugin.settings.differentIntervalCommitAndPush &&
-            this.plugin.settings.autoPushInterval > 0
-        ) {
-            const diff = this.diff(
-                this.plugin.settings.autoPushInterval,
-                lastAutos.push
-            );
-            this.startAutoPush(diff);
-        }
-        if (this.plugin.settings.autoPullInterval > 0) {
-            const diff = this.diff(
-                this.plugin.settings.autoPullInterval,
-                lastAutos.pull
-            );
-            this.startAutoPull(diff);
-        }
-    }
-
-    unload() {
-        this.clearAutoPull();
-        this.clearAutoPush();
-        this.clearAutoCommitAndSync();
+        await this.setUpAutoCommit();
     }
 
     /**
-     * Clears all timers and sets all timers to their current settings.
-     *
-     * This does not calculate any differences to last autos or commits.
-     * Should only be used when settings are changed.
+     * 卸载自动任务 - Unload automatics
+     * 清除所有定时器 - Clear all timers
+     */
+    unload() {
+        this.clearIdleDebouncer();
+    }
+
+    /**
+     * 重新加载自动任务 - Reload automatics
+     * 当设置变更时调用 - Called when settings change
+     * @param type - 要重新加载的任务类型 - Task type to reload
      */
     reload(...type: ("commit" | "push" | "pull")[]) {
         if (this.plugin.localStorage.getPausedAutomatics()) return;
 
+        // 仅处理 commit 类型 - Only handle commit type
         if (type.contains("commit")) {
-            this.clearAutoCommitAndSync();
-            if (this.plugin.settings.autoSaveInterval > 0) {
-                this.startAutoCommitAndSync(
-                    this.plugin.settings.autoSaveInterval
-                );
-            }
+            this.clearIdleDebouncer();
+            this.setUpAutoCommit();
         }
-        if (type.contains("push")) {
-            this.clearAutoPush();
-            if (
-                this.plugin.settings.differentIntervalCommitAndPush &&
-                this.plugin.settings.autoPushInterval > 0
-            ) {
-                this.startAutoPush(this.plugin.settings.autoPushInterval);
-            }
-        }
-        if (type.contains("pull")) {
-            this.clearAutoPull();
-            if (this.plugin.settings.autoPullInterval > 0) {
-                this.startAutoPull(this.plugin.settings.autoPullInterval);
-            }
-        }
+        // push 和 pull 由 commit-and-sync 流程处理 - push and pull are handled by commit-and-sync flow
     }
 
     /**
-     * Starts the auto commit-and-sync with the correct remaining time.
-     *
-     * Additionally, if `setLastSaveToLastCommit` is enabled, the last auto commit-and-sync
-     * is set to the last commit time.
+     * 设置空闲超时自动提交 - Set up idle timeout auto commit
+     * 当启用自动提交且空闲超时 > 0 时，创建防抖器
+     * Creates debouncer when auto commit is enabled and idle timeout > 0
      */
-    private async setUpAutoCommitAndSync() {
-        if (this.plugin.settings.setLastSaveToLastCommit) {
-            this.clearAutoCommitAndSync();
-            const lastCommitDate =
-                await this.plugin.gitManager.getLastCommitTime();
-            if (lastCommitDate) {
-                this.saveLastAuto(lastCommitDate, "backup");
-            }
-        }
+    private async setUpAutoCommit() {
+        const { autoCommitEnabled, idleTimeout } = this.plugin.settings;
 
-        if (!this.timeoutIDCommitAndSync && !this.plugin.autoCommitDebouncer) {
-            const lastAutos = this.loadLastAuto();
+        // 自动提交未启用或超时为 0 时跳过 - Skip if auto commit disabled or timeout is 0
+        if (!autoCommitEnabled || idleTimeout <= 0) return;
 
-            if (this.plugin.settings.autoSaveInterval > 0) {
-                const diff = this.diff(
-                    this.plugin.settings.autoSaveInterval,
-                    lastAutos.backup
-                );
-                this.startAutoCommitAndSync(diff);
-            }
-        }
+        // 将分钟转换为毫秒 - Convert minutes to milliseconds
+        const timeMs = idleTimeout * 60000;
+
+        // 创建防抖器：文件变更后等待指定时间再提交
+        // Create debouncer: wait specified time after file change before committing
+        this.idleDebouncer = debounce(
+            () => this.doAutoCommit(),
+            timeMs,
+            true
+        );
+
+        // 将防抖器注册到插件，以便文件变更事件可以触发它
+        // Register debouncer to plugin so file change events can trigger it
+        this.plugin.autoCommitDebouncer = this.idleDebouncer;
     }
 
-    private startAutoCommitAndSync(minutes?: number) {
-        let time = (minutes ?? this.plugin.settings.autoSaveInterval) * 60000;
-        if (this.plugin.settings.autoBackupAfterFileChange) {
-            if (minutes === 0) {
-                this.doAutoCommitAndSync();
-            } else {
-                this.plugin.autoCommitDebouncer = debounce(
-                    () => this.doAutoCommitAndSync(),
-                    time,
-                    true
-                );
-            }
-        } else {
-            // max timeout in js
-            if (time > 2147483647) time = 2147483647;
-            this.timeoutIDCommitAndSync = window.setTimeout(
-                () => this.doAutoCommitAndSync(),
-                time
-            );
-        }
-    }
-
-    // This is used for both auto commit-and-sync and commit only
-    private doAutoCommitAndSync(): void {
+    /**
+     * 执行自动提交 - Execute auto commit
+     * 通过 promise 队列串行化执行 - Serialized via promise queue
+     */
+    private doAutoCommit(): void {
         this.plugin.promiseQueue.addTask(
             async () => {
-                // Re-check if the auto commit should run now or be postponed,
-                // because the last commit time has changed
-                if (this.plugin.settings.setLastSaveToLastCommit) {
-                    const lastCommitDate =
-                        await this.plugin.gitManager.getLastCommitTime();
-                    if (lastCommitDate) {
-                        this.saveLastAuto(lastCommitDate, "backup");
-                        const diff = this.diff(
-                            this.plugin.settings.autoSaveInterval,
-                            lastCommitDate
-                        );
-                        if (diff > 0) {
-                            this.startAutoCommitAndSync(diff);
-                            // Return false to mark the next iteration
-                            // already being scheduled
-                            return false;
-                        }
-                    }
-                }
-                const onlyStaged = this.plugin.settings.autoCommitOnlyStaged;
-                if (this.plugin.settings.differentIntervalCommitAndPush) {
-                    await this.plugin.commit({ fromAuto: true, onlyStaged });
-                } else {
-                    await this.plugin.commitAndSync({
-                        fromAutoBackup: true,
-                        onlyStaged,
-                    });
-                }
+                // 执行提交并同步 - Execute commit and sync
+                await this.plugin.commitAndSync({
+                    fromAutoBackup: true,
+                });
                 return true;
             },
-            (schedule) => {
-                // Don't schedule if the next iteration is already scheduled
-                if (schedule !== false) {
-                    this.saveLastAuto(new Date(), "backup");
-                    this.startAutoCommitAndSync();
-                }
-            }
-        );
-    }
-
-    private startAutoPull(minutes?: number) {
-        let time = (minutes ?? this.plugin.settings.autoPullInterval) * 60000;
-        // max timeout in js
-        if (time > 2147483647) time = 2147483647;
-
-        this.timeoutIDPull = window.setTimeout(() => this.doAutoPull(), time);
-    }
-
-    private doAutoPull(): void {
-        this.plugin.promiseQueue.addTask(
-            () => this.plugin.pullChangesFromRemote(),
             () => {
-                this.saveLastAuto(new Date(), "pull");
-                this.startAutoPull();
+                // 保存最后自动备份时间 - Save last auto backup time
+                this.plugin.localStorage.setLastAutoBackup(
+                    new Date().toString()
+                );
             }
         );
-    }
-
-    private startAutoPush(minutes?: number) {
-        let time = (minutes ?? this.plugin.settings.autoPushInterval) * 60000;
-        // max timeout in js
-        if (time > 2147483647) time = 2147483647;
-
-        this.timeoutIDPush = window.setTimeout(() => this.doAutoPush(), time);
-    }
-
-    private doAutoPush(): void {
-        this.plugin.promiseQueue.addTask(
-            () => this.plugin.push(),
-            () => {
-                this.saveLastAuto(new Date(), "push");
-                this.startAutoPush();
-            }
-        );
-    }
-
-    private clearAutoCommitAndSync(): boolean {
-        let wasActive = false;
-        if (this.timeoutIDCommitAndSync) {
-            window.clearTimeout(this.timeoutIDCommitAndSync);
-            this.timeoutIDCommitAndSync = undefined;
-            wasActive = true;
-        }
-        if (this.plugin.autoCommitDebouncer) {
-            this.plugin.autoCommitDebouncer?.cancel();
-            this.plugin.autoCommitDebouncer = undefined;
-            wasActive = true;
-        }
-        return wasActive;
-    }
-
-    private clearAutoPull(): boolean {
-        if (this.timeoutIDPull) {
-            window.clearTimeout(this.timeoutIDPull);
-            this.timeoutIDPull = undefined;
-            return true;
-        }
-        return false;
-    }
-
-    private clearAutoPush(): boolean {
-        if (this.timeoutIDPush) {
-            window.clearTimeout(this.timeoutIDPush);
-            this.timeoutIDPush = undefined;
-            return true;
-        }
-        return false;
     }
 
     /**
-     * Calculates the minutes until the next auto action. >= 0
-     *
-     * This is done by the difference between the setting and the time since the last auto action, but at least 0.
+     * 清除空闲防抖器 - Clear idle debouncer
+     * @returns 是否有活跃的防抖器 - Whether there was an active debouncer
      */
-    private diff(setting: number, lastAuto: Date) {
-        const now = new Date();
-        const diff =
-            setting -
-            Math.round((now.getTime() - lastAuto.getTime()) / 1000 / 60);
-        return Math.max(0, diff);
+    private clearIdleDebouncer(): boolean {
+        if (this.idleDebouncer) {
+            this.idleDebouncer.cancel();
+            this.idleDebouncer = undefined;
+            this.plugin.autoCommitDebouncer = undefined;
+            return true;
+        }
+        if (this.plugin.autoCommitDebouncer) {
+            this.plugin.autoCommitDebouncer.cancel();
+            this.plugin.autoCommitDebouncer = undefined;
+            return true;
+        }
+        return false;
     }
 }

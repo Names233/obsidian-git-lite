@@ -255,3 +255,273 @@ interface GitAutoSyncSettings {
 ## 依赖
 
 保持原项目的构建工具链（esbuild），删除不需要的运行时依赖。
+
+---
+
+## 认证机制
+
+与原版 obsidian-git 保持一致，支持以下方式：
+
+### 桌面端
+- **Personal Access Token (PAT)**：用户在设置页填写 GitHub PAT
+- **SSH Key**：使用系统已配置的 SSH key（~/.ssh/）
+- **GitHub CLI**：检测 `gh auth status`，复用已登录的凭据
+
+### 移动端
+- **PAT 为主**：移动端无法使用 SSH agent，推荐 PAT
+- **OAuth（可选）**：后续可考虑 GitHub OAuth flow
+
+### 存储方式
+- PAT 存储在 Obsidian 的 `localStorage` 中（与原版一致）
+- 不加密，依赖 Obsidian 本身的插件隔离机制
+
+---
+
+## 错误恢复与重试策略
+
+### 1. 网络错误处理
+
+```
+场景                    处理方式
+──────────────────────────────────────────────────────
+网络断开                检测 navigator.onLine，暂停触发器
+                        网络恢复后自动触发一次同步
+DNS 解析失败            重试 3 次，间隔 5s/10s/30s
+连接超时 (30s)          中止当前操作，提示用户
+```
+
+### 2. Git 操作错误
+
+```
+场景                    处理方式
+──────────────────────────────────────────────────────
+push 被拒绝 (non-fast-forward)   自动 pull --rebase，再 push
+pull 冲突                        弹出 ConflictUI，暂停自动同步
+                                 用户解决后手动触发 commit-and-sync
+本地仓库损坏                     提示用户重新 clone
+.git 锁文件残留                  检测并清理 .git/index.lock
+```
+
+### 3. AI API 错误
+
+```
+场景                    处理方式
+──────────────────────────────────────────────────────
+API 超时 (10s)          fallback 到默认消息 "vault backup: {date}"
+API 返回错误            fallback + Notice 提示用户检查配置
+Rate Limit (429)        fallback + 提示用户稍后重试
+API Key 无效 (401)      fallback + 引导用户检查设置
+diff 内容过大 (>4KB)    截断 diff，只取前 4KB 发送给 AI
+```
+
+### 4. 重试机制
+
+```typescript
+// 通用重试函数
+async function retry<T>(
+  fn: () => Promise<T>,
+  maxAttempts: number = 3,
+  delays: number[] = [5000, 10000, 30000] // 5s, 10s, 30s
+): Promise<T>
+
+// 使用场景
+- git pull/push：最多重试 3 次
+- AI API 调用：不重试（直接 fallback）
+- git status：不重试（快速失败）
+```
+
+### 5. 状态恢复
+
+插件启动时检查：
+- 是否有未完成的同步操作（检查 .git/MERGE_HEAD 等）
+- 是否有残留的锁文件
+- 上次同步是否失败（读取本地状态标记）
+
+---
+
+## 性能优化
+
+### 1. Git 操作优化
+
+```
+操作              优化策略
+──────────────────────────────────────────────────────
+git status        使用 `git status --porcelain -uno`
+                  忽略 untracked 文件（减少扫描范围）
+                  
+git diff          使用 `git diff --stat` 先判断变更规模
+                  变更文件 > 50 个时，只取 stat 不取完整 diff
+                  
+git add           使用 `git add -A` 一次性暂存
+                  避免逐文件 add 的开销
+```
+
+### 2. 触发器优化
+
+```
+场景              优化策略
+──────────────────────────────────────────────────────
+频繁保存文件      debounce 5 秒，合并多次保存为一次同步
+                  用户连续 Cmd+S 10 次 → 只触发 1 次同步
+                  
+大型 vault        git status 结果缓存 30 秒
+(>1000 文件)      短时间内多次触发只执行一次 status
+                  
+空变更            git status 无变更时跳过整个流程
+                  避免不必要的 AI API 调用
+```
+
+### 3. AI 调用优化
+
+```
+场景              优化策略
+──────────────────────────────────────────────────────
+diff 太大         截断到 4KB，取文件列表 + 部分变更内容
+                  prompt 中说明 "变更较多，仅展示部分"
+                  
+API 响应慢        设置 10 秒超时
+                  超时直接 fallback，不阻塞用户
+                  
+连续触发          AI 结果缓存 60 秒
+                  相同 diff 内容不重复调用 API
+```
+
+### 4. 移动端专项优化
+
+```
+问题              解决方案
+──────────────────────────────────────────────────────
+isomorphic-git    限制单次 commit 的文件数量 (≤ 100)
+性能较差          超过时分批 commit
+                  
+内存占用          大文件 (> 1MB) 跳过 AI 分析
+                  只对文本文件生成 commit message
+                  
+后台限制          监听 Obsidian 的 suspend 事件
+                  暂停触发器，恢复后重新激活
+```
+
+---
+
+## 测试策略
+
+### 1. 单元测试
+
+```typescript
+// 测试框架：Vitest（轻量，兼容 Obsidian 模块）
+
+describe('TriggerManager', () => {
+  it('应 debounce 5 秒内的多次触发')
+  it('应在 15 分钟无操作后触发同步')
+  it('应在窗口 blur 时触发同步')
+  it('应在 Cmd+S 时触发同步')
+  it('网络断开时应暂停触发器')
+})
+
+describe('CommitAI', () => {
+  it('应根据 diff 生成 commit message')
+  it('应在 API 超时时 fallback 到默认消息')
+  it('应在 diff 为空时跳过 AI 调用')
+  it('应截断超过 4KB 的 diff')
+  it('应自动选择中文或英文')
+})
+
+describe('GitManager', () => {
+  it('应正确解析 git status 输出')
+  it('应处理 merge conflict')
+  it('应检测并清理锁文件')
+})
+```
+
+### 2. 集成测试
+
+```typescript
+describe('完整同步流程', () => {
+  // 使用临时 git 仓库
+  
+  it('无变更时应跳过同步')
+  it('有变更时应完成 commit → pull → push 流程')
+  it('push 被拒时应自动 rebase 并重试')
+  it('pull 冲突时应暂停并弹出 ConflictUI')
+  it('AI 失败时应使用 fallback 消息')
+})
+```
+
+### 3. 手动测试清单
+
+```
+桌面端测试：
+  □ 首次安装，未配置 git 仓库 → 提示初始化
+  □ 配置 PAT 后能正常 push/pull
+  □ SSH key 方式能正常工作
+  □ Cmd+S 触发同步
+  □ 15 分钟空闲后自动同步
+  □ 切换窗口时触发同步
+  □ 网络断开后恢复，自动同步
+  □ 大型 vault (1000+ 文件) 性能正常
+  □ AI commit message 生成正常
+  □ AI 失败时 fallback 正常
+
+移动端测试：
+  □ PAT 方式能正常认证
+  □ 基本同步流程正常
+  □ 后台切换不丢失状态
+  □ 大文件处理正常
+```
+
+### 4. CI/CD
+
+```yaml
+# GitHub Actions
+name: Test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+      - run: pnpm install
+      - run: pnpm test        # 单元测试
+      - run: pnpm build       # 构建检查
+      - run: pnpm lint        # 代码风格
+```
+
+---
+
+## 发布计划
+
+### 插件信息
+- **插件名称**：Git Auto Sync
+- **插件 ID**：obsidian-git-lite
+- **作者**：Names233
+- **仓库**：https://github.com/Names233/obsidian-git-lite
+
+### 发布到 Obsidian 社区插件
+
+1. **准备材料**
+   - manifest.json（更新为新插件信息）
+   - styles.css（精简后的样式）
+   - main.js（构建产物）
+   - README.md（用户文档）
+
+2. **提交审核**
+   - Fork obsidian-releases 仓库
+   - 在 community-plugins.json 中添加插件信息
+   - 提交 PR 等待审核
+
+3. **版本管理**
+   - 遵循 semver（0.1.0 → 0.2.0 → 1.0.0）
+   - 每个版本更新 manifest.json 和 package.json
+   - 使用 GitHub Releases 发布构建产物
+
+### 首次发布目标 (v0.1.0)
+
+- [x] 开发计划文档
+- [ ] Phase 1: 清理完成
+- [ ] Phase 2: 核心模块实现
+- [ ] Phase 3: UI 完成
+- [ ] 基本测试通过
+- [ ] README 文档
+- [ ] 提交到 Obsidian 社区
+

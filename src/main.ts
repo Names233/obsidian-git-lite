@@ -1,162 +1,115 @@
+// Git Auto Sync 主入口 - Main entry point for Git Auto Sync
+// 精简为自动同步插件，只保留核心 Git 同步逻辑
+// Simplified to auto-sync plugin, only core git sync logic is kept
+
 import { Errors } from "isomorphic-git";
-import type { Debouncer, Menu, TAbstractFile, WorkspaceLeaf } from "obsidian";
-import {
-    debounce,
-    FileSystemAdapter,
-    MarkdownView,
-    normalizePath,
-    Notice,
-    Platform,
-    Plugin,
-    TFile,
-    TFolder,
-    moment,
-} from "obsidian";
-import * as path from "path";
-import * as fsPromises from "fs/promises";
-import { pluginRef } from "src/pluginGlobalRef";
+import type { Debouncer } from "obsidian";
+import { debounce, Notice, Platform, Plugin } from "obsidian";
 import { PromiseQueue } from "src/promiseQueue";
 import { ObsidianGitSettingsTab } from "src/setting/settings";
 import { StatusBar } from "src/statusBar";
-import { CustomMessageModal } from "src/ui/modals/customMessageModal";
 import AutomaticsManager from "./automaticsManager";
-import { addCommmands } from "./commands";
-import {
-    CONFLICT_OUTPUT_FILE,
-    DEFAULT_SETTINGS,
-    DIFF_VIEW_CONFIG,
-    HISTORY_VIEW_CONFIG,
-    SOURCE_CONTROL_VIEW_CONFIG,
-    SPLIT_DIFF_VIEW_CONFIG,
-} from "./constants";
+import { CONFLICT_OUTPUT_FILE } from "./constants";
 import type { GitManager } from "./gitManager/gitManager";
 import { IsomorphicGit } from "./gitManager/isomorphicGit";
 import { SimpleGit } from "./gitManager/simpleGit";
 import { LocalStorageSettings } from "./setting/localStorageSettings";
-import Tools from "./tools";
+// 导入核心类型 - Import core types
 import type {
     FileStatusResult,
-    ObsidianGitSettings,
+    GitAutoSyncSettings,
     PluginState,
     Status,
-    UnstagedFile,
 } from "./types";
+// 导入核心枚举和常量 - Import core enums and constants
 import {
     CurrentGitAction,
-    mergeSettingsByPriority,
+    DEFAULT_SETTINGS,
     NoNetworkError,
 } from "./types";
-import DiffView from "./ui/diff/diffView";
-import SplitDiffView from "./ui/diff/splitDiffView";
-import HistoryView from "./ui/history/historyView";
-import { BranchModal } from "./ui/modals/branchModal";
-import { GeneralModal } from "./ui/modals/generalModal";
-import GitView from "./ui/sourceControl/sourceControl";
 import { BranchStatusBar } from "./ui/statusBar/branchStatusBar";
-import {
-    assertNever,
-    convertPathToAbsoluteGitignoreRule,
-    formatRemoteUrl,
-    spawnAsync,
-    splitRemoteBranch,
-} from "./utils";
-import { DiscardModal, type DiscardResult } from "./ui/modals/discardModal";
-import { HunkActions } from "./editor/signs/hunkActions";
-import { EditorIntegration } from "./editor/editorIntegration";
 
+/**
+ * ObsidianGit 插件主类 - Main plugin class
+ *
+ * 提供 Git 自动同步功能：
+ * - 自动定时提交和推送
+ * - 启动时自动拉取
+ * - 状态栏显示
+ * Provides Git auto-sync:
+ * - Auto commit and push on interval
+ * - Auto pull on startup
+ * - Status bar display
+ */
 export default class ObsidianGit extends Plugin {
+    // Git 管理器实例 - Git manager instance
     gitManager: GitManager;
+    // 自动化管理器 - Automatics manager
     automaticsManager = new AutomaticsManager(this);
-    tools = new Tools(this);
+    // 本地存储设置 - Local storage settings
     localStorage = new LocalStorageSettings(this);
-    settings: ObsidianGitSettings;
+    // 插件设置 - Plugin settings
+    settings: GitAutoSyncSettings;
+    // 设置面板 - Settings tab
     settingsTab?: ObsidianGitSettingsTab;
+    // 状态栏 - Status bar
     statusBar?: StatusBar;
+    // 分支状态栏 - Branch status bar
     branchBar?: BranchStatusBar;
+    // 插件状态 - Plugin state
     state: PluginState = {
         gitAction: CurrentGitAction.idle,
         offlineMode: false,
     };
+    // 上次拉取的文件列表 - Last pulled files
     lastPulledFiles: FileStatusResult[];
+    // Git 是否就绪 - Whether git is ready
     gitReady = false;
+    // 任务队列 - Promise queue for serializing git operations
     promiseQueue: PromiseQueue = new PromiseQueue(this);
-
-    /**
-     * Debouncer for the auto commit after file changes.
-     */
+    // 自动提交防抖器 - Debouncer for auto commit after file changes
     autoCommitDebouncer: Debouncer<[], void> | undefined;
+    // 缓存的 Git 状态 - Cached git status
     cachedStatus: Status | undefined;
-    // Used to store the path of the file that is currently shown in the diff view.
-    lastDiffViewState: Record<string, unknown> | undefined;
+    // 需要清理的定时器 - Intervals to clear on unload
     intervalsToClear: number[] = [];
-    editorIntegration: EditorIntegration = new EditorIntegration(this);
-    hunkActions = new HunkActions(this);
-
-    /**
-     * Debouncer for the refresh of the git status for the source control view after file changes.
-     */
+    // 刷新防抖器 - Debouncer for refreshing status
     debRefresh: Debouncer<[], void>;
 
+    // ── 状态管理 - State management ───────────────────────────────────
+
+    /** 设置插件状态 - Set plugin state */
     setPluginState(state: Partial<PluginState>): void {
         this.state = Object.assign(this.state, state);
         this.statusBar?.display();
     }
 
+    /** 更新缓存的 Git 状态 - Update cached git status */
     async updateCachedStatus(): Promise<Status> {
         this.app.workspace.trigger("obsidian-git:loading-status");
         this.cachedStatus = await this.gitManager.status();
         if (this.cachedStatus.conflicted.length > 0) {
             this.localStorage.setConflict(true);
-            await this.branchBar?.display();
         } else {
             this.localStorage.setConflict(false);
-            await this.branchBar?.display();
         }
-
-        this.app.workspace.trigger(
-            "obsidian-git:status-changed",
-            this.cachedStatus
-        );
+        await this.branchBar?.display();
+        this.app.workspace.trigger("obsidian-git:status-changed", this.cachedStatus);
         return this.cachedStatus;
     }
 
+    /** 刷新状态 - Refresh status */
     async refresh() {
         if (!this.gitReady) return;
-
-        const gitViews = this.app.workspace.getLeavesOfType(
-            SOURCE_CONTROL_VIEW_CONFIG.type
-        );
-        const historyViews = this.app.workspace.getLeavesOfType(
-            HISTORY_VIEW_CONFIG.type
-        );
-
-        if (
-            this.settings.changedFilesInStatusBar ||
-            gitViews.some((leaf) => !(leaf.isDeferred ?? false)) ||
-            historyViews.some((leaf) => !(leaf.isDeferred ?? false))
-        ) {
-            await this.updateCachedStatus().catch((e) => this.displayError(e));
-        }
-
+        await this.updateCachedStatus().catch((e) => this.displayError(e));
         this.app.workspace.trigger("obsidian-git:refreshed");
-
-        // We don't put a line authoring refresh here, as it would force a re-loading
-        // of the line authoring feature - which would lead to a jumpy editor-view in the
-        // ui after every rename event.
     }
 
-    refreshUpdatedHead() {}
+    // ── 插件生命周期 - Plugin lifecycle ───────────────────────────────
 
+    /** 插件加载 - Plugin load */
     async onload() {
-        console.log(
-            "loading " +
-                this.manifest.name +
-                " plugin: v" +
-                this.manifest.version
-        );
-
-        pluginRef.plugin = this;
-
+        console.log("loading " + this.manifest.name + " plugin: v" + this.manifest.version);
         this.localStorage.migrate();
         await this.loadSettings();
         await this.migrateSettings();
@@ -165,169 +118,56 @@ export default class ObsidianGit extends Plugin {
         this.addSettingTab(this.settingsTab);
 
         if (!this.localStorage.getPluginDisabled()) {
-            this.registerStuff();
-
+            this.registerEvents();
             this.app.workspace.onLayoutReady(() =>
-                this.init({ fromReload: false }).catch((e) =>
-                    this.displayError(e)
-                )
+                this.init({ fromReload: false }).catch((e) => this.displayError(e))
             );
         }
     }
 
+    /** 外部设置变更时重新加载 - Reload on external settings change */
     onExternalSettingsChange() {
         this.reloadSettings().catch((e) => this.displayError(e));
     }
 
-    /** Reloads the settings from disk and applies them by unloading the plugin
-     * and initializing it again.
-     */
+    /** 重新加载设置并重新初始化 - Reload settings and reinitialize */
     async reloadSettings(): Promise<void> {
         const previousSettings = JSON.stringify(this.settings);
-
         await this.loadSettings();
-
         const newSettings = JSON.stringify(this.settings);
 
-        // Only reload plugin if the settings have actually changed
         if (previousSettings !== newSettings) {
             this.log("Reloading settings");
-
             this.unloadPlugin();
-
             await this.init({ fromReload: true });
-
-            this.app.workspace
-                .getLeavesOfType(SOURCE_CONTROL_VIEW_CONFIG.type)
-                .forEach((leaf) => {
-                    if (!(leaf.isDeferred ?? false))
-                        return (leaf.view as GitView).reload();
-                });
-
-            this.app.workspace
-                .getLeavesOfType(HISTORY_VIEW_CONFIG.type)
-                .forEach((leaf) => {
-                    if (!(leaf.isDeferred ?? false))
-                        return (leaf.view as HistoryView).reload();
-                });
         }
     }
 
-    /** This method only registers events, views, commands and more.
-     *
-     * This only needs to be called once since the registered events are
-     * unregistered when the plugin is unloaded.
-     *
-     * This mustn't depend on the plugin's settings.
-     */
-    registerStuff(): void {
+    /** 注册事件监听 - Register event listeners */
+    private registerEvents(): void {
         this.registerEvent(
             this.app.workspace.on("obsidian-git:refresh", () => {
                 this.refresh().catch((e) => this.displayError(e));
             })
         );
-        this.registerEvent(
-            this.app.workspace.on("obsidian-git:head-change", () => {
-                this.refreshUpdatedHead();
-            })
-        );
 
-        this.registerEvent(
-            this.app.workspace.on("file-menu", (menu, file, source) => {
-                this.handleFileMenu(menu, file, source, "file-manu");
-            })
-        );
-
-        this.registerEvent(
-            this.app.workspace.on("obsidian-git:menu", (menu, path, source) => {
-                this.handleFileMenu(menu, path, source, "obsidian-git:menu");
-            })
-        );
-
-        this.registerEvent(
-            this.app.workspace.on("active-leaf-change", (leaf) => {
-                this.onActiveLeafChange(leaf);
-            })
-        );
-
+        // 非桌面端：监听文件变更事件触发自动提交
+        // Non-desktop: watch file changes to trigger auto commit
         if (!Platform.isDesktopApp) {
-            // On desktop, the file changes are watched by `SimpleGit` to
-            // account for all changes (including those outside of Obsidian).
-            this.registerEvent(
-                this.app.vault.on("modify", () => {
-                    this.debRefresh();
-                    this.autoCommitDebouncer?.();
-                })
-            );
-            this.registerEvent(
-                this.app.vault.on("delete", () => {
-                    this.debRefresh();
-                    this.autoCommitDebouncer?.();
-                })
-            );
-            this.registerEvent(
-                this.app.vault.on("create", () => {
-                    this.debRefresh();
-                    this.autoCommitDebouncer?.();
-                })
-            );
-            this.registerEvent(
-                this.app.vault.on("rename", () => {
-                    this.debRefresh();
-                    this.autoCommitDebouncer?.();
-                })
-            );
+            const triggerRefresh = () => {
+                this.debRefresh();
+                this.autoCommitDebouncer?.();
+            };
+            this.registerEvent(this.app.vault.on("modify", triggerRefresh));
+            this.registerEvent(this.app.vault.on("delete", triggerRefresh));
+            this.registerEvent(this.app.vault.on("create", triggerRefresh));
+            this.registerEvent(this.app.vault.on("rename", triggerRefresh));
         }
 
-        this.registerView(SOURCE_CONTROL_VIEW_CONFIG.type, (leaf) => {
-            return new GitView(leaf, this);
-        });
-
-        this.registerView(HISTORY_VIEW_CONFIG.type, (leaf) => {
-            return new HistoryView(leaf, this);
-        });
-
-        this.registerView(DIFF_VIEW_CONFIG.type, (leaf) => {
-            return new DiffView(leaf, this);
-        });
-
-        this.registerView(SPLIT_DIFF_VIEW_CONFIG.type, (leaf) => {
-            return new SplitDiffView(leaf, this);
-        });
-        this.addRibbonIcon(
-            "git-pull-request",
-            "Open Git source control",
-            async () => {
-                const leafs = this.app.workspace.getLeavesOfType(
-                    SOURCE_CONTROL_VIEW_CONFIG.type
-                );
-                let leaf: WorkspaceLeaf;
-                if (leafs.length === 0) {
-                    leaf =
-                        this.app.workspace.getRightLeaf(false) ??
-                        this.app.workspace.getLeaf();
-                    await leaf.setViewState({
-                        type: SOURCE_CONTROL_VIEW_CONFIG.type,
-                    });
-                } else {
-                    leaf = leafs.first()!;
-                }
-                await this.app.workspace.revealLeaf(leaf);
-            }
-        );
-
-        this.registerHoverLinkSource(SOURCE_CONTROL_VIEW_CONFIG.type, {
-            display: "Git View",
-            defaultMod: true,
-        });
-
-        this.editorIntegration.onLoadPlugin();
-
         this.setRefreshDebouncer();
-
-        addCommmands(this);
     }
 
+    /** 设置刷新防抖器 - Set up refresh debouncer */
     setRefreshDebouncer(): void {
         this.debRefresh?.cancel();
         this.debRefresh = debounce(
@@ -341,210 +181,84 @@ export default class ObsidianGit extends Plugin {
         );
     }
 
-    async addFileToGitignore(
-        filePath: string,
-        isFolder?: boolean
-    ): Promise<void> {
-        const gitRelativePath = this.gitManager.getRelativeRepoPath(
-            filePath,
-            true
-        );
-        // Define an absolute rule that can apply only for this item.
-        const gitignoreRule = convertPathToAbsoluteGitignoreRule({
-            isFolder,
-            gitRelativePath,
-        });
-        await this.app.vault.adapter.append(
-            this.gitManager.getRelativeVaultPath(".gitignore"),
-            "\n" + gitignoreRule
-        );
-        this.app.workspace.trigger("obsidian-git:refresh");
-    }
-
-    handleFileMenu(
-        menu: Menu,
-        file: TAbstractFile | string,
-        source: string,
-        type: "file-manu" | "obsidian-git:menu"
-    ): void {
-        if (!this.gitReady) return;
-        if (!this.settings.showFileMenu) return;
-        if (!file) return;
-        let filePath: string;
-        if (typeof file === "string") {
-            filePath = file;
-        } else {
-            filePath = file.path;
+    /** 迁移旧版设置 - Migrate legacy settings
+     *  将旧版 localStorage 中的数据迁移到新版设置
+     *  Migrate old localStorage data to new settings format
+     */
+    private async migrateSettings(): Promise<void> {
+        // 迁移旧版 gitPath 设置 - Migrate legacy gitPath setting
+        // 旧版可能存储在 settings 中，现改为 localStorage
+        // Old versions may have stored it in settings, now moved to localStorage
+        const data = (await this.loadData()) as Record<string, unknown> | null;
+        if (data && data["gitPath"] != undefined) {
+            this.localStorage.setGitPath(data["gitPath"] as string);
+            delete data["gitPath"];
+            await this.saveData(data);
         }
-
-        if (source == "file-explorer-context-menu") {
-            menu.addItem((item) => {
-                item.setTitle(`Git: Stage`)
-                    .setIcon("plus-circle")
-                    .setSection("action")
-                    .onClick((_) => {
-                        this.promiseQueue.addTask(async () => {
-                            if (file instanceof TFile) {
-                                await this.stageFile(file);
-                            } else {
-                                await this.gitManager.stageAll({
-                                    dir: this.gitManager.getRelativeRepoPath(
-                                        filePath,
-                                        true
-                                    ),
-                                });
-                                this.app.workspace.trigger(
-                                    "obsidian-git:refresh"
-                                );
-                            }
-                        });
-                    });
-            });
-            menu.addItem((item) => {
-                item.setTitle(`Git: Unstage`)
-                    .setIcon("minus-circle")
-                    .setSection("action")
-                    .onClick((_) => {
-                        this.promiseQueue.addTask(async () => {
-                            if (file instanceof TFile) {
-                                await this.unstageFile(file);
-                            } else {
-                                await this.gitManager.unstageAll({
-                                    dir: this.gitManager.getRelativeRepoPath(
-                                        filePath,
-                                        true
-                                    ),
-                                });
-
-                                this.app.workspace.trigger(
-                                    "obsidian-git:refresh"
-                                );
-                            }
-                        });
-                    });
-            });
-            menu.addItem((item) => {
-                item.setTitle(`Git: Add to .gitignore`)
-                    .setIcon("file-x")
-                    .setSection("action")
-                    .onClick((_) => {
-                        this.addFileToGitignore(
-                            filePath,
-                            file instanceof TFolder
-                        ).catch((e) => this.displayError(e));
-                    });
-            });
-        }
-
-        if (source == "git-source-control") {
-            menu.addItem((item) => {
-                item.setTitle(`Git: Add to .gitignore`)
-                    .setIcon("file-x")
-                    .setSection("action")
-                    .onClick((_) => {
-                        this.addFileToGitignore(
-                            filePath,
-                            file instanceof TFolder
-                        ).catch((e) => this.displayError(e));
-                    });
-            });
-            const gitManager = this.app.vault.adapter;
-            if (
-                type === "obsidian-git:menu" &&
-                gitManager instanceof FileSystemAdapter
-            ) {
-                menu.addItem((item) => {
-                    item.setTitle("Open in default app")
-                        .setIcon("arrow-up-right")
-                        .setSection("action")
-                        .onClick((_) => {
-                            this.app.openWithDefaultApp(filePath);
-                        });
-                });
-                menu.addItem((item) => {
-                    item.setTitle("Show in system explorer")
-                        .setIcon("arrow-up-right")
-                        .setSection("action")
-                        .onClick((_) => {
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-                            (window as any).electron.shell.showItemInFolder(
-                                path.join(gitManager.getBasePath(), filePath)
-                            );
-                        });
-                });
-            }
+        // 迁移旧版 username 设置 - Migrate legacy username setting
+        if (data && data["username"] != undefined) {
+            this.localStorage.setPassword(data["username"] as string);
+            delete data["username"];
+            await this.saveData(data);
         }
     }
 
-    async migrateSettings(): Promise<void> {
-        if (this.settings.mergeOnPull != undefined) {
-            this.settings.syncMethod = this.settings.mergeOnPull
-                ? "merge"
-                : "rebase";
-            this.settings.mergeOnPull = undefined;
-            await this.saveSettings();
-        }
-        if (this.settings.autoCommitMessage === undefined) {
-            this.settings.autoCommitMessage = this.settings.commitMessage;
-            await this.saveSettings();
-        }
-        if (this.settings.gitPath != undefined) {
-            this.localStorage.setGitPath(this.settings.gitPath);
-            this.settings.gitPath = undefined;
-            await this.saveSettings();
-        }
-        if (this.settings.username != undefined) {
-            this.localStorage.setPassword(this.settings.username);
-            this.settings.username = undefined;
-            await this.saveSettings();
-        }
-    }
-
+    /** 卸载插件资源 - Unload plugin resources */
     unloadPlugin() {
         this.gitReady = false;
-
-        this.editorIntegration.onUnloadPlugin();
         this.automaticsManager.unload();
         this.branchBar?.remove();
         this.statusBar?.remove();
         this.statusBar = undefined;
         this.branchBar = undefined;
-        this.gitManager.unload();
+        this.gitManager?.unload();
         this.promiseQueue.clear();
 
         for (const interval of this.intervalsToClear) {
             window.clearInterval(interval);
         }
         this.intervalsToClear = [];
-
-        this.debRefresh.cancel();
+        this.debRefresh?.cancel();
     }
 
+    /** 插件卸载 - Plugin unload */
     onunload() {
         this.unloadPlugin();
-
         console.log("unloading " + this.manifest.name + " plugin");
     }
 
+    // ── 设置管理 - Settings management ────────────────────────────────
+
+    /** 加载设置 - Load settings */
     async loadSettings() {
-        // At first startup, `data` is `null` because data.json does not exist.
-        let data = (await this.loadData()) as ObsidianGitSettings | null;
-        //Check for existing settings
+        // 从磁盘加载用户设置 - Load user settings from disk
+        let data = (await this.loadData()) as Partial<GitAutoSyncSettings> | null;
         if (data == undefined) {
-            data = <ObsidianGitSettings>{ showedMobileNotice: true };
+            // 首次加载时的默认数据 - Default data for first load
+            data = {};
         }
-        this.settings = mergeSettingsByPriority(DEFAULT_SETTINGS, data);
+        // 使用 spread 合并默认设置和用户设置，用户设置优先
+        // Merge default settings with user settings using spread, user settings take priority
+        this.settings = { ...DEFAULT_SETTINGS, ...data };
     }
 
+    /** 保存设置 - Save settings */
     async saveSettings() {
-        this.settingsTab?.beforeSaveSettings();
         await this.saveData(this.settings);
     }
 
+    /** 是否使用 SimpleGit（桌面端） - Whether to use SimpleGit (desktop) */
     get useSimpleGit(): boolean {
         return Platform.isDesktopApp;
     }
 
+    // ── Git 初始化 - Git initialization ───────────────────────────────
+
+    /**
+     * 初始化 Git 管理器 - Initialize git manager
+     * 创建 GitManager 实例，检查仓库状态，启动自动任务
+     * Creates GitManager instance, checks repo status, starts automatics
+     */
     async init({ fromReload = false }): Promise<void> {
         if (this.settings.showStatusBar && !this.statusBar) {
             const statusBarEl = this.addStatusBarItem();
@@ -564,75 +278,44 @@ export default class ObsidianGit extends Plugin {
 
             const result = await this.gitManager.checkRequirements();
             const pausedAutomatics = this.localStorage.getPausedAutomatics();
+
             switch (result) {
                 case "missing-git":
-                    this.displayError(
-                        `Cannot run git command. Trying to run: '${this.localStorage.getGitPath() || "git"}' .`
-                    );
+                    this.displayError(`Cannot run git command. Trying to run: '${this.localStorage.getGitPath() || "git"}' .`);
                     break;
                 case "missing-repo":
-                    new Notice(
-                        "Can't find a valid git repository. Please create one via the given command or clone an existing repo.",
-                        10000
-                    );
+                    new Notice("Can't find a valid git repository. Please create one via the given command or clone an existing repo.", 10000);
                     break;
                 case "valid":
                     this.gitReady = true;
                     this.setPluginState({ gitAction: CurrentGitAction.idle });
 
-                    if (
-                        Platform.isDesktop &&
-                        this.settings.showBranchStatusBar &&
-                        !this.branchBar
-                    ) {
+                    // 桌面端显示分支状态栏 - Show branch status bar on desktop
+                    if (Platform.isDesktop && this.settings.showBranchStatusBar && !this.branchBar) {
                         const branchStatusBarEl = this.addStatusBarItem();
-                        this.branchBar = new BranchStatusBar(
-                            branchStatusBarEl,
-                            this
-                        );
+                        this.branchBar = new BranchStatusBar(branchStatusBarEl, this);
                         this.intervalsToClear.push(
-                            window.setInterval(
-                                () =>
-                                    void this.branchBar
-                                        ?.display()
-                                        .catch(console.error),
-                                60000
-                            )
+                            window.setInterval(() => void this.branchBar?.display().catch(console.error), 60000)
                         );
                     }
                     await this.branchBar?.display();
 
-                    this.editorIntegration.onReady();
-
                     this.app.workspace.trigger("obsidian-git:refresh");
-                    /// Among other things, this notifies the history view that git is ready
                     this.app.workspace.trigger("obsidian-git:head-change");
 
-                    if (
-                        !fromReload &&
-                        this.settings.autoPullOnBoot &&
-                        !pausedAutomatics
-                    ) {
-                        this.promiseQueue.addTask(() =>
-                            this.pullChangesFromRemote()
-                        );
+                    // 启动时自动拉取 - Auto pull on startup
+                    if (!fromReload && this.settings.autoPullOnBoot && !pausedAutomatics) {
+                        this.promiseQueue.addTask(() => this.pullChangesFromRemote());
                     }
 
+                    // 初始化自动任务 - Initialize automatics
                     if (!pausedAutomatics) {
                         await this.automaticsManager.init();
                     }
-
                     if (pausedAutomatics) {
                         new Notice("Automatic routines are currently paused.");
                     }
-
                     break;
-                default:
-                    this.log(
-                        "Something weird happened. The 'checkRequirements' result is " +
-                            /* eslint-disable-next-line @typescript-eslint/restrict-plus-operands */
-                            result
-                    );
             }
         } catch (error) {
             this.displayError(error);
@@ -640,121 +323,9 @@ export default class ObsidianGit extends Plugin {
         }
     }
 
-    async createNewRepo() {
-        try {
-            await this.gitManager.init();
-            new Notice("Initialized new repo");
-            await this.init({ fromReload: true });
-        } catch (e) {
-            this.displayError(e);
-        }
-    }
-
-    async cloneNewRepo() {
-        const modal = new GeneralModal(this, {
-            placeholder: "Enter remote URL",
-        });
-        const url = await modal.openAndGetResult();
-        if (url) {
-            const confirmOption = "Vault Root";
-            let dir = await new GeneralModal(this, {
-                options:
-                    this.gitManager instanceof IsomorphicGit
-                        ? [confirmOption]
-                        : [],
-                placeholder:
-                    "Enter directory for clone. It needs to be empty or not existent.",
-                allowEmpty: this.gitManager instanceof IsomorphicGit,
-            }).openAndGetResult();
-            if (dir == undefined) return;
-            if (dir === confirmOption) {
-                dir = ".";
-            }
-
-            dir = normalizePath(dir);
-            if (dir === "/") {
-                dir = ".";
-            }
-
-            if (dir === ".") {
-                const modal = new GeneralModal(this, {
-                    options: ["NO", "YES"],
-                    placeholder: `Does your remote repo contain a ${this.app.vault.configDir} directory at the root?`,
-                    onlySelection: true,
-                });
-                const containsConflictDir = await modal.openAndGetResult();
-                if (containsConflictDir === undefined) {
-                    new Notice("Aborted clone");
-                    return;
-                } else if (containsConflictDir === "YES") {
-                    const confirmOption =
-                        "DELETE ALL YOUR LOCAL CONFIG AND PLUGINS";
-                    const modal = new GeneralModal(this, {
-                        options: ["Abort clone", confirmOption],
-                        placeholder: `To avoid conflicts, the local ${this.app.vault.configDir} directory needs to be deleted.`,
-                        onlySelection: true,
-                    });
-                    const shouldDelete =
-                        (await modal.openAndGetResult()) === confirmOption;
-                    if (shouldDelete) {
-                        await this.app.vault.adapter.rmdir(
-                            this.app.vault.configDir,
-                            true
-                        );
-                    } else {
-                        new Notice("Aborted clone");
-                        return;
-                    }
-                }
-            }
-            const depth = await new GeneralModal(this, {
-                placeholder:
-                    "Specify depth of clone. Leave empty for full clone.",
-                allowEmpty: true,
-            }).openAndGetResult();
-            let depthInt = undefined;
-            if (depth === undefined) {
-                new Notice("Aborted clone");
-                return;
-            }
-
-            if (depth !== "") {
-                depthInt = parseInt(depth);
-                if (isNaN(depthInt)) {
-                    new Notice("Invalid depth. Aborting clone.");
-                    return;
-                }
-            }
-            new Notice(`Cloning new repo into "${dir}"`);
-            const oldBase = this.settings.basePath;
-            const customDir = dir && dir !== ".";
-            //Set new base path before clone to ensure proper .git/index file location in isomorphic-git
-            if (customDir) {
-                this.settings.basePath = dir;
-            }
-            try {
-                await this.gitManager.clone(
-                    formatRemoteUrl(url),
-                    dir,
-                    depthInt
-                );
-                new Notice("Cloned new repo.");
-                new Notice("Please restart Obsidian");
-
-                if (customDir) {
-                    await this.saveSettings();
-                }
-            } catch (error) {
-                this.displayError(error);
-                this.settings.basePath = oldBase;
-                await this.saveSettings();
-            }
-        }
-    }
-
     /**
-     * Retries to call `this.init()` if necessary, otherwise returns directly
-     * @returns true if `this.gitManager` is ready to be used, false if not.
+     * 确保 Git 已初始化 - Ensure git is initialized
+     * @returns true if gitManager is ready, false otherwise
      */
     async isAllInitialized(): Promise<boolean> {
         if (!this.gitReady) {
@@ -763,14 +334,14 @@ export default class ObsidianGit extends Plugin {
         return this.gitReady;
     }
 
-    ///Used for command
+    // ── 核心同步操作 - Core sync operations ───────────────────────────
+
+    /** 从远程拉取更改（命令版本） - Pull changes from remote (command version) */
     async pullChangesFromRemote(): Promise<void> {
         if (!(await this.isAllInitialized())) return;
 
         const filesUpdated = await this.pull();
-        if (filesUpdated === false) {
-            return;
-        }
+        if (filesUpdated === false) return;
         if (!filesUpdated) {
             this.displayMessage("Pull: Everything is up-to-date");
         }
@@ -778,11 +349,7 @@ export default class ObsidianGit extends Plugin {
         if (this.gitManager instanceof SimpleGit) {
             const status = await this.updateCachedStatus();
             if (status.conflicted.length > 0) {
-                this.displayError(
-                    `You have conflicts in ${status.conflicted.length} ${
-                        status.conflicted.length == 1 ? "file" : "files"
-                    }`
-                );
+                this.displayError(`You have conflicts in ${status.conflicted.length} ${status.conflicted.length == 1 ? "file" : "files"}`);
                 await this.handleConflict(status.conflicted);
             }
         }
@@ -791,6 +358,7 @@ export default class ObsidianGit extends Plugin {
         this.setPluginState({ gitAction: CurrentGitAction.idle });
     }
 
+    /** 提交并同步（commit + pull + push） - Commit and sync (commit + pull + push) */
     async commitAndSync({
         fromAutoBackup,
         requestCustomMessage = false,
@@ -804,10 +372,7 @@ export default class ObsidianGit extends Plugin {
     }): Promise<void> {
         if (!(await this.isAllInitialized())) return;
 
-        if (
-            this.settings.syncMethod == "reset" &&
-            this.settings.pullBeforePush
-        ) {
+        if (this.settings.syncMethod == "reset" && this.settings.pullBeforePush) {
             await this.pull();
         }
 
@@ -817,23 +382,14 @@ export default class ObsidianGit extends Plugin {
             commitMessage,
             onlyStaged,
         });
-        if (!commitSuccessful) {
-            return;
-        }
+        if (!commitSuccessful) return;
 
-        if (
-            this.settings.syncMethod != "reset" &&
-            this.settings.pullBeforePush
-        ) {
+        if (this.settings.syncMethod != "reset" && this.settings.pullBeforePush) {
             await this.pull();
         }
 
         if (!this.settings.disablePush) {
-            // Prevent trying to push every time. Only if unpushed commits are present
-            if (
-                (await this.remotesAreSet()) &&
-                (await this.gitManager.canPush())
-            ) {
+            if ((await this.remotesAreSet()) && (await this.gitManager.canPush())) {
                 await this.push();
             } else {
                 this.displayMessage("No commits to push");
@@ -842,7 +398,10 @@ export default class ObsidianGit extends Plugin {
         this.setPluginState({ gitAction: CurrentGitAction.idle });
     }
 
-    // Returns true if commit was successfully
+    /**
+     * 提交更改 - Commit changes
+     * @returns true if commit was successful
+     */
     async commit({
         fromAuto,
         requestCustomMessage = false,
@@ -859,197 +418,73 @@ export default class ObsidianGit extends Plugin {
         if (!(await this.isAllInitialized())) return false;
         try {
             let hadConflict = this.localStorage.getConflict();
-
             let status: Status | undefined;
             let stagedFiles: { vaultPath: string; path: string }[] = [];
-            let unstagedFiles: (UnstagedFile & { vaultPath: string })[] = [];
+            let unstagedFiles: { vaultPath: string; path: string; type: string }[] = [];
 
             if (this.gitManager instanceof SimpleGit) {
                 await this.mayDeleteConflictFile();
                 status = await this.updateCachedStatus();
-
-                //Should not be necessary, but just in case
-                if (status.conflicted.length == 0) {
-                    hadConflict = false;
-                }
-
-                // check for conflict files on auto backup
+                if (status.conflicted.length == 0) hadConflict = false;
                 if (fromAuto && status.conflicted.length > 0) {
-                    this.displayError(
-                        `Did not commit, because you have conflicts in ${
-                            status.conflicted.length
-                        } ${
-                            status.conflicted.length == 1 ? "file" : "files"
-                        }. Please resolve them and commit per command.`
-                    );
+                    this.displayError(`Did not commit, because you have conflicts in ${status.conflicted.length} ${status.conflicted.length == 1 ? "file" : "files"}. Please resolve them and commit per command.`);
                     await this.handleConflict(status.conflicted);
                     return false;
                 }
                 stagedFiles = status.staged;
-
-                // This typecast is only needed to hide the fact that `type` is missing, but that is only needed for isomorphic-git
-                unstagedFiles = status.changed as unknown as (UnstagedFile & {
-                    vaultPath: string;
-                })[];
+                unstagedFiles = status.changed as unknown as { vaultPath: string; path: string; type: string }[];
             } else {
-                // isomorphic-git section
-
                 if (fromAuto && hadConflict) {
-                    // isomorphic-git doesn't have a way to detect current
-                    // conflicts, they are only detected on commit
-                    //
-                    // Conflicts should only be resolved by manually committing.
-                    this.displayError(
-                        `Did not commit, because you have conflicts. Please resolve them and commit per command.`
-                    );
+                    this.displayError("Did not commit, because you have conflicts. Please resolve them and commit per command.");
                     return false;
+                }
+                if (hadConflict) await this.mayDeleteConflictFile();
+                const gitManager = this.gitManager as IsomorphicGit;
+                if (onlyStaged) {
+                    stagedFiles = await gitManager.getStagedFiles();
                 } else {
-                    if (hadConflict) {
-                        await this.mayDeleteConflictFile();
-                    }
-                    const gitManager = this.gitManager as IsomorphicGit;
-                    if (onlyStaged) {
-                        stagedFiles = await gitManager.getStagedFiles();
-                    } else {
-                        const res = await gitManager.getUnstagedFiles();
-                        unstagedFiles = res.map(({ path, type }) => ({
-                            vaultPath:
-                                this.gitManager.getRelativeVaultPath(path),
-                            path,
-                            type,
-                        }));
-                    }
+                    const res = await gitManager.getUnstagedFiles();
+                    unstagedFiles = res.map(({ path, type }) => ({
+                        vaultPath: this.gitManager.getRelativeVaultPath(path),
+                        path, type,
+                    }));
                 }
             }
 
-            if (
-                await this.tools.hasTooBigFiles(
-                    onlyStaged
-                        ? stagedFiles
-                        : [...stagedFiles, ...unstagedFiles]
-                )
-            ) {
-                this.setPluginState({ gitAction: CurrentGitAction.idle });
-                return false;
-            }
-
-            if (
-                unstagedFiles.length + stagedFiles.length !== 0 ||
-                hadConflict
-            ) {
-                // The commit message from settings or previously set in the
-                // source control view
+            if (unstagedFiles.length + stagedFiles.length !== 0 || hadConflict) {
                 let cmtMessage = (commitMessage ??= fromAuto
                     ? this.settings.autoCommitMessage
                     : this.settings.commitMessage);
 
-                // Optionally ask the user via a modal for a commit message
-                if (
-                    (fromAuto && this.settings.customMessageOnAutoBackup) ||
-                    requestCustomMessage
-                ) {
+                if ((fromAuto && this.settings.customMessageOnAutoBackup) || requestCustomMessage) {
                     if (!this.settings.disablePopups && fromAuto) {
-                        new Notice(
-                            "Auto backup: Please enter a custom commit message. Leave empty to abort"
-                        );
+                        new Notice("Auto backup: Please enter a custom commit message. Leave empty to abort");
                     }
-                    const modalMessage = await new CustomMessageModal(
-                        this
-                    ).openAndGetResult();
-
-                    if (
-                        modalMessage != undefined &&
-                        modalMessage != "" &&
-                        modalMessage != "..."
-                    ) {
+                    const { CustomMessageModal } = await import("./ui/modals/customMessageModal");
+                    const modalMessage = await new CustomMessageModal(this).openAndGetResult();
+                    if (modalMessage != undefined && modalMessage != "" && modalMessage != "...") {
                         cmtMessage = modalMessage;
                     } else {
-                        this.setPluginState({
-                            gitAction: CurrentGitAction.idle,
-                        });
+                        this.setPluginState({ gitAction: CurrentGitAction.idle });
                         return false;
-                    }
-
-                    // On desktop may run a script to get the commit message
-                } else if (
-                    this.gitManager instanceof SimpleGit &&
-                    this.settings.commitMessageScript
-                ) {
-                    const templateScript = this.settings.commitMessageScript;
-                    const hostname = this.localStorage.getHostname() || "";
-                    let formattedScript = templateScript.replace(
-                        "{{hostname}}",
-                        hostname
-                    );
-
-                    formattedScript = formattedScript.replace(
-                        "{{date}}",
-                        moment().format(this.settings.commitDateFormat)
-                    );
-                    let shPath = "sh";
-                    if (Platform.isWin) {
-                        shPath =
-                            process.env.PROGRAMFILES + "\\Git\\bin\\sh.exe";
-                        let shExists = false;
-                        try {
-                            await fsPromises.access(
-                                shPath,
-                                fsPromises.constants.X_OK
-                            );
-                            shExists = true;
-                        } catch {
-                            shExists = false;
-                        }
-
-                        if (!shExists) {
-                            this.displayError(
-                                `Cannot find sh.exe at ${shPath}. Please make sure Git is properly installed.`
-                            );
-                            return false;
-                        }
-                    }
-
-                    const res = await spawnAsync(
-                        shPath,
-                        ["-c", formattedScript],
-                        { cwd: this.gitManager.absoluteRepoPath }
-                    );
-                    if (res.code != 0) {
-                        this.displayError(res.stderr);
-                    } else if (res.stdout.trim().length == 0) {
-                        this.displayMessage(
-                            "Stdout from commit message script is empty. Using default message."
-                        );
-                    } else {
-                        cmtMessage = res.stdout;
                     }
                 }
 
-                // Check if commit message is empty after all processing
                 if (!cmtMessage || cmtMessage.trim() === "") {
                     new Notice("Commit aborted: No commit message provided");
-                    this.setPluginState({
-                        gitAction: CurrentGitAction.idle,
-                    });
+                    this.setPluginState({ gitAction: CurrentGitAction.idle });
                     return false;
                 }
 
                 let committedFiles: number | undefined;
                 if (onlyStaged) {
-                    committedFiles = await this.gitManager.commit({
-                        message: cmtMessage,
-                        amend,
-                    });
+                    committedFiles = await this.gitManager.commit({ message: cmtMessage, amend });
                 } else {
                     committedFiles = await this.gitManager.commitAll({
-                        message: cmtMessage,
-                        status,
-                        unstagedFiles,
-                        amend,
+                        message: cmtMessage, status, unstagedFiles, amend,
                     });
                 }
 
-                // Handle eventually resolved conflicts
                 if (this.gitManager instanceof SimpleGit) {
                     await this.updateCachedStatus();
                 }
@@ -1057,19 +492,13 @@ export default class ObsidianGit extends Plugin {
                 let roughly = false;
                 if (committedFiles === undefined) {
                     roughly = true;
-                    committedFiles =
-                        unstagedFiles.length + stagedFiles.length || 0;
+                    committedFiles = unstagedFiles.length + stagedFiles.length || 0;
                 }
-                this.displayMessage(
-                    `Committed${roughly ? " approx." : ""} ${committedFiles} ${
-                        committedFiles == 1 ? "file" : "files"
-                    }`
-                );
+                this.displayMessage(`Committed${roughly ? " approx." : ""} ${committedFiles} ${committedFiles == 1 ? "file" : "files"}`);
             } else {
                 this.displayMessage("No changes to commit");
             }
             this.app.workspace.trigger("obsidian-git:refresh");
-
             return true;
         } catch (error) {
             this.displayError(error);
@@ -1077,53 +506,33 @@ export default class ObsidianGit extends Plugin {
         }
     }
 
-    /*
-     * Returns true if push was successful
-     */
+    /** 推送到远程 - Push to remote. Returns true if push was successful */
     async push(): Promise<boolean> {
         if (!(await this.isAllInitialized())) return false;
-        if (!(await this.remotesAreSet())) {
-            return false;
-        }
+        if (!(await this.remotesAreSet())) return false;
         const hadConflict = this.localStorage.getConflict();
         try {
-            if (this.gitManager instanceof SimpleGit)
-                await this.mayDeleteConflictFile();
+            if (this.gitManager instanceof SimpleGit) await this.mayDeleteConflictFile();
 
-            // Refresh because of pull
             let status: Status;
-            if (
-                this.gitManager instanceof SimpleGit &&
-                (status = await this.updateCachedStatus()).conflicted.length > 0
-            ) {
-                this.displayError(
-                    `Cannot push. You have conflicts in ${
-                        status.conflicted.length
-                    } ${status.conflicted.length == 1 ? "file" : "files"}`
-                );
+            if (this.gitManager instanceof SimpleGit && (status = await this.updateCachedStatus()).conflicted.length > 0) {
+                this.displayError(`Cannot push. You have conflicts in ${status.conflicted.length} ${status.conflicted.length == 1 ? "file" : "files"}`);
                 await this.handleConflict(status.conflicted);
                 return false;
-            } else if (
-                this.gitManager instanceof IsomorphicGit &&
-                hadConflict
-            ) {
-                this.displayError(`Cannot push. You have conflicts`);
+            } else if (this.gitManager instanceof IsomorphicGit && hadConflict) {
+                this.displayError("Cannot push. You have conflicts");
                 return false;
             }
+
             this.log("Pushing....");
             const pushedFiles = await this.gitManager.push();
-
             if (pushedFiles !== undefined) {
                 if (pushedFiles === null) {
-                    this.displayMessage(`Pushed to remote`);
+                    this.displayMessage("Pushed to remote");
                 } else if (pushedFiles > 0) {
-                    this.displayMessage(
-                        `Pushed ${pushedFiles} ${
-                            pushedFiles == 1 ? "file" : "files"
-                        } to remote`
-                    );
+                    this.displayMessage(`Pushed ${pushedFiles} ${pushedFiles == 1 ? "file" : "files"} to remote`);
                 } else {
-                    this.displayMessage(`No commits to push`);
+                    this.displayMessage("No commits to push");
                 }
             }
             this.setPluginState({ offlineMode: false });
@@ -1139,492 +548,164 @@ export default class ObsidianGit extends Plugin {
         }
     }
 
-    /** Used for internals
-     *  Returns whether the pull added a commit or not.
-     *
-     *  See {@link pullChangesFromRemote} for the command version.
-     */
+    /** 内部拉取方法 - Internal pull method. Returns number of pulled files or false */
     async pull(): Promise<false | number> {
-        if (!(await this.remotesAreSet())) {
-            return false;
-        }
+        if (!(await this.remotesAreSet())) return false;
         try {
             this.log("Pulling....");
             const pulledFiles = (await this.gitManager.pull()) || [];
             this.setPluginState({ offlineMode: false });
-
             if (pulledFiles.length > 0) {
-                this.displayMessage(
-                    `Pulled ${pulledFiles.length} ${
-                        pulledFiles.length == 1 ? "file" : "files"
-                    } from remote`
-                );
+                this.displayMessage(`Pulled ${pulledFiles.length} ${pulledFiles.length == 1 ? "file" : "files"} from remote`);
                 this.lastPulledFiles = pulledFiles;
             }
             return pulledFiles.length;
         } catch (e) {
             this.displayError(e);
-
             return false;
         }
     }
 
-    async fetch(): Promise<void> {
-        if (!(await this.remotesAreSet())) {
-            return;
-        }
-        try {
-            await this.gitManager.fetch();
+    // ── 辅助方法 - Helper methods ─────────────────────────────────────
 
-            this.displayMessage(`Fetched from remote`);
-            this.setPluginState({ offlineMode: false });
-            this.app.workspace.trigger("obsidian-git:refresh");
-        } catch (error) {
-            this.displayError(error);
-        }
-    }
-
-    async mayDeleteConflictFile(): Promise<void> {
-        const file = this.app.vault.getAbstractFileByPath(CONFLICT_OUTPUT_FILE);
-        if (file) {
-            this.app.workspace.iterateAllLeaves((leaf) => {
-                if (
-                    leaf.view instanceof MarkdownView &&
-                    leaf.view.file?.path == file.path
-                ) {
-                    leaf.detach();
-                }
-            });
-            await this.app.vault.delete(file);
-        }
-    }
-
-    async stageFile(file: TFile): Promise<boolean> {
-        if (!(await this.isAllInitialized())) return false;
-
-        await this.gitManager.stage(file.path, true);
-
-        this.app.workspace.trigger("obsidian-git:refresh");
-
-        this.setPluginState({ gitAction: CurrentGitAction.idle });
-        return true;
-    }
-
-    async unstageFile(file: TFile): Promise<boolean> {
-        if (!(await this.isAllInitialized())) return false;
-
-        await this.gitManager.unstage(file.path, true);
-
-        this.app.workspace.trigger("obsidian-git:refresh");
-
-        this.setPluginState({ gitAction: CurrentGitAction.idle });
-        return true;
-    }
-
-    async switchBranch(): Promise<string | undefined> {
-        if (!(await this.isAllInitialized())) return;
-
-        const branchInfo = await this.gitManager.branchInfo();
-        const selectedBranch = await new BranchModal(
-            this,
-            branchInfo.branches
-        ).openAndGetReslt();
-
-        if (selectedBranch != undefined) {
-            await this.gitManager.checkout(selectedBranch);
-            this.displayMessage(`Switched to ${selectedBranch}`);
-            this.app.workspace.trigger("obsidian-git:refresh");
-            await this.branchBar?.display();
-            return selectedBranch;
-        }
-    }
-
-    async switchRemoteBranch(): Promise<string | undefined> {
-        if (!(await this.isAllInitialized())) return;
-
-        const selectedBranch = (await this.selectRemoteBranch()) || "";
-
-        const [remote, branch] = splitRemoteBranch(selectedBranch);
-
-        if (branch != undefined && remote != undefined) {
-            await this.gitManager.checkout(branch, remote);
-            this.displayMessage(`Switched to ${selectedBranch}`);
-            await this.branchBar?.display();
-            return selectedBranch;
-        }
-    }
-
-    async createBranch(): Promise<string | undefined> {
-        if (!(await this.isAllInitialized())) return;
-
-        const newBranch = await new GeneralModal(this, {
-            placeholder: "Create new branch",
-        }).openAndGetResult();
-        if (newBranch != undefined) {
-            await this.gitManager.createBranch(newBranch);
-            this.displayMessage(`Created new branch ${newBranch}`);
-            await this.branchBar?.display();
-            return newBranch;
-        }
-    }
-
-    async deleteBranch(): Promise<string | undefined> {
-        if (!(await this.isAllInitialized())) return;
-
-        const branchInfo = await this.gitManager.branchInfo();
-        if (branchInfo.current) branchInfo.branches.remove(branchInfo.current);
-        const branch = await new GeneralModal(this, {
-            options: branchInfo.branches,
-            placeholder: "Delete branch",
-            onlySelection: true,
-        }).openAndGetResult();
-        if (branch != undefined) {
-            let force = false;
-            const merged = await this.gitManager.branchIsMerged(branch);
-            // Using await inside IF throws exception
-            if (!merged) {
-                const forceAnswer = await new GeneralModal(this, {
-                    options: ["YES", "NO"],
-                    placeholder:
-                        "This branch isn't merged into HEAD. Force delete?",
-                    onlySelection: true,
-                }).openAndGetResult();
-                if (forceAnswer !== "YES") {
-                    return;
-                }
-                force = forceAnswer === "YES";
-            }
-            await this.gitManager.deleteBranch(branch, force);
-            this.displayMessage(`Deleted branch ${branch}`);
-            await this.branchBar?.display();
-            return branch;
-        }
-    }
-
-    /** Ensures that the upstream branch is set.
-     * If not, it will prompt the user to set it.
-     *
-     * An exception is when the user has submodules enabled.
-     * In this case, the upstream branch is not required,
-     * to allow pulling/pushing only the submodules and not the outer repo.
-     */
+    /** 确保远程分支已设置 - Ensure upstream branch is set */
     async remotesAreSet(): Promise<boolean> {
-        if (this.settings.updateSubmodules) {
-            return true;
-        }
+        if (this.settings.updateSubmodules) return true;
         if (
             this.gitManager instanceof SimpleGit &&
-            (await this.gitManager.getConfig("push.autoSetupRemote", "all")) ==
-                "true"
-        ) {
-            return true;
-        }
+            (await this.gitManager.getConfig("push.autoSetupRemote", "all")) == "true"
+        ) return true;
         if (!(await this.gitManager.branchInfo()).tracking) {
             new Notice("No upstream branch is set. Please select one.");
-            return await this.setUpstreamBranch();
-        }
-        return true;
-    }
-
-    async setUpstreamBranch(): Promise<boolean> {
-        const remoteBranch = await this.selectRemoteBranch();
-
-        if (remoteBranch == undefined) {
-            this.displayError("Aborted. No upstream-branch is set!", 10000);
-            this.setPluginState({ gitAction: CurrentGitAction.idle });
-            return false;
-        } else {
+            const { GeneralModal } = await import("./ui/modals/generalModal");
+            const { splitRemoteBranch } = await import("./utils");
+            const remoteBranch = await this.selectRemoteBranch();
+            if (remoteBranch == undefined) {
+                this.displayError("Aborted. No upstream-branch is set!", 10000);
+                this.setPluginState({ gitAction: CurrentGitAction.idle });
+                return false;
+            }
             await this.gitManager.updateUpstreamBranch(remoteBranch);
             this.displayMessage(`Set upstream branch to ${remoteBranch}`);
             this.setPluginState({ gitAction: CurrentGitAction.idle });
             return true;
         }
+        return true;
     }
 
-    async discardAll(path?: string): Promise<DiscardResult> {
-        if (!(await this.isAllInitialized())) return false;
+    /** 选择远程分支 - Select remote branch */
+    private async selectRemoteBranch(): Promise<string | undefined> {
+        const { GeneralModal } = await import("./ui/modals/generalModal");
+        let remotes = await this.gitManager.getRemotes();
+        let selectedRemote: string | undefined;
 
-        const status = await this.gitManager.status({ path });
-
-        let filesToDeleteCount = 0;
-        let filesToDiscardCount = 0;
-        for (const file of status.changed) {
-            if (file.workingDir == "U") {
-                filesToDeleteCount++;
-            } else {
-                filesToDiscardCount++;
-            }
-        }
-        if (filesToDeleteCount + filesToDiscardCount == 0) {
-            return false;
-        }
-
-        const result = await new DiscardModal({
-            app: this.app,
-            filesToDeleteCount,
-            filesToDiscardCount,
-            path: path ?? "",
-        }).openAndGetResult();
-
-        switch (result) {
-            case false:
-                return result;
-            case "discard":
-                await this.gitManager.discardAll({
-                    dir: path,
-                    status: this.cachedStatus,
+        if (remotes.length === 0) {
+            const { formatRemoteUrl } = await import("./utils");
+            const nameModal = new GeneralModal(this, {
+                options: remotes,
+                placeholder: "Select or create a new remote by typing its name and selecting it",
+            });
+            const remoteName = await nameModal.openAndGetResult();
+            if (remoteName) {
+                const oldUrl = await this.gitManager.getRemoteUrl(remoteName);
+                const urlModal = new GeneralModal(this, {
+                    initialValue: oldUrl,
+                    placeholder: "Enter remote URL",
                 });
-                break;
-            case "delete": {
-                await this.gitManager.discardAll({
-                    dir: path,
-                    status: this.cachedStatus,
-                });
-                const untrackedPaths = await this.gitManager.getUntrackedPaths({
-                    path,
-                    status: this.cachedStatus,
-                });
-                for (const file of untrackedPaths) {
-                    const vaultPath =
-                        this.gitManager.getRelativeVaultPath(file);
-                    const tFile =
-                        this.app.vault.getAbstractFileByPath(vaultPath);
-
-                    if (tFile) {
-                        await this.app.fileManager.trashFile(tFile);
-                    } else {
-                        if (file.endsWith("/")) {
-                            await this.app.vault.adapter.rmdir(vaultPath, true);
-                        } else {
-                            await this.app.vault.adapter.remove(vaultPath);
-                        }
-                    }
+                const remoteURL = await urlModal.openAndGetResult();
+                if (remoteURL) {
+                    await this.gitManager.setRemote(remoteName, formatRemoteUrl(remoteURL));
+                    selectedRemote = remoteName;
                 }
-                break;
             }
-            default:
-                assertNever(result);
+            remotes = await this.gitManager.getRemotes();
         }
-        this.app.workspace.trigger("obsidian-git:refresh");
-        return result;
+
+        const nameModal = new GeneralModal(this, {
+            options: remotes,
+            placeholder: "Select or create a new remote by typing its name and selecting it",
+        });
+        const remoteName = selectedRemote ?? (await nameModal.openAndGetResult());
+        if (remoteName) {
+            this.displayMessage("Fetching remote branches");
+            await this.gitManager.fetch(remoteName);
+            const branches = await this.gitManager.getRemoteBranches(remoteName);
+            const branchModal = new GeneralModal(this, {
+                options: branches,
+                placeholder: "Select or create a new remote branch by typing its name and selecting it",
+            });
+            const branch = await branchModal.openAndGetResult();
+            if (branch == undefined) return;
+            const { splitRemoteBranch } = await import("./utils");
+            if (!branch.startsWith(remoteName + "/")) return `${remoteName}/${branch}`;
+            return branch;
+        }
     }
 
+    /** 删除冲突文件 - Delete conflict file if it exists */
+    async mayDeleteConflictFile(): Promise<void> {
+        const file = this.app.vault.getAbstractFileByPath(CONFLICT_OUTPUT_FILE);
+        if (file) {
+            this.app.vault.delete(file);
+        }
+    }
+
+    /** 处理冲突 - Handle merge conflicts */
     async handleConflict(conflicted?: string[]): Promise<void> {
         this.localStorage.setConflict(true);
         let lines: string[] | undefined;
         if (conflicted !== undefined) {
+            const { TFile } = await import("obsidian");
             lines = [
                 "# Conflicts",
                 "Please resolve them and commit them using the commands `Git: Commit all changes` followed by `Git: Push`",
                 "(This file will automatically be deleted before commit)",
-                "[[#Additional Instructions]] available below file list",
                 "",
                 ...conflicted.map((e) => {
                     const file = this.app.vault.getAbstractFileByPath(e);
                     if (file instanceof TFile) {
-                        const link = this.app.metadataCache.fileToLinktext(
-                            file,
-                            "/"
-                        );
+                        const link = this.app.metadataCache.fileToLinktext(file, "/");
                         return `- [[${link}]]`;
-                    } else {
-                        return `- Not a file: ${e}`;
                     }
+                    return `- Not a file: ${e}`;
                 }),
-                `
-# Additional Instructions
-I strongly recommend to use "Source mode" for viewing the conflicted files. For simple conflicts, in each file listed above replace every occurrence of the following text blocks with the desired text.
-
-\`\`\`diff
-<<<<<<< HEAD
-    File changes in local repository
-=======
-    File changes in remote repository
->>>>>>> origin/main
-\`\`\``,
             ];
         }
-        await this.tools.writeAndOpenFile(lines?.join("\n"));
+        const { Tools } = await import("./tools");
+        const tools = new Tools(this);
+        await tools.writeAndOpenFile(lines?.join("\n"));
     }
 
-    async editRemotes(): Promise<string | undefined> {
-        if (!(await this.isAllInitialized())) return;
-
-        const remotes = await this.gitManager.getRemotes();
-
-        const nameModal = new GeneralModal(this, {
-            options: remotes,
-            placeholder:
-                "Select or create a new remote by typing its name and selecting it",
-        });
-        const remoteName = await nameModal.openAndGetResult();
-
-        if (remoteName) {
-            const oldUrl = await this.gitManager.getRemoteUrl(remoteName);
-
-            const urlModal = new GeneralModal(this, {
-                initialValue: oldUrl,
-                placeholder: "Enter remote URL",
-            });
-            // urlModal.inputEl.setText(oldUrl ?? "");
-            const remoteURL = await urlModal.openAndGetResult();
-            if (remoteURL) {
-                await this.gitManager.setRemote(
-                    remoteName,
-                    formatRemoteUrl(remoteURL)
-                );
-                return remoteName;
-            }
-        }
-    }
-
-    async selectRemoteBranch(): Promise<string | undefined> {
-        let remotes = await this.gitManager.getRemotes();
-        let selectedRemote: string | undefined;
-        if (remotes.length === 0) {
-            selectedRemote = await this.editRemotes();
-            if (selectedRemote == undefined) {
-                remotes = await this.gitManager.getRemotes();
-            }
-        }
-
-        const nameModal = new GeneralModal(this, {
-            options: remotes,
-            placeholder:
-                "Select or create a new remote by typing its name and selecting it",
-        });
-        const remoteName =
-            selectedRemote ?? (await nameModal.openAndGetResult());
-
-        if (remoteName) {
-            this.displayMessage("Fetching remote branches");
-            await this.gitManager.fetch(remoteName);
-            const branches =
-                await this.gitManager.getRemoteBranches(remoteName);
-            const branchModal = new GeneralModal(this, {
-                options: branches,
-                placeholder:
-                    "Select or create a new remote branch by typing its name and selecting it",
-            });
-            const branch = await branchModal.openAndGetResult();
-            if (branch == undefined) return;
-            if (!branch.startsWith(remoteName + "/")) {
-                // If the branch does not start with the remote name, prepend it
-                return `${remoteName}/${branch}`;
-            }
-            return branch; // Already in the correct format
-        }
-    }
-
-    async removeRemote() {
-        if (!(await this.isAllInitialized())) return;
-
-        const remotes = await this.gitManager.getRemotes();
-
-        const nameModal = new GeneralModal(this, {
-            options: remotes,
-            placeholder: "Select a remote",
-        });
-        const remoteName = await nameModal.openAndGetResult();
-
-        if (remoteName) {
-            await this.gitManager.removeRemote(remoteName);
-        }
-    }
-
-    onActiveLeafChange(leaf: WorkspaceLeaf | null): void {
-        const view = leaf?.view;
-        // Prevent removing focus when switching to other panes than file panes like search or GitView
-        if (
-            !view?.getState().file &&
-            !(view instanceof DiffView || view instanceof SplitDiffView)
-        )
-            return;
-
-        const sourceControlLeaf = this.app.workspace
-            .getLeavesOfType(SOURCE_CONTROL_VIEW_CONFIG.type)
-            .first();
-        const historyLeaf = this.app.workspace
-            .getLeavesOfType(HISTORY_VIEW_CONFIG.type)
-            .first();
-
-        // Clear existing active state
-        sourceControlLeaf?.view.containerEl
-            .querySelector(`div.tree-item-self.is-active`)
-            ?.removeClass("is-active");
-        historyLeaf?.view.containerEl
-            .querySelector(`div.tree-item-self.is-active`)
-            ?.removeClass("is-active");
-
-        if (
-            leaf?.view instanceof DiffView ||
-            leaf?.view instanceof SplitDiffView
-        ) {
-            const path = leaf.view.state.bFile;
-            const escapedPath = path.replace(/["\\]/g, "\\$&");
-            this.lastDiffViewState = leaf.view.getState();
-            let el: Element | undefined | null;
-            if (sourceControlLeaf && leaf.view.state.aRef == "HEAD") {
-                el = sourceControlLeaf.view.containerEl.querySelector(
-                    `div.staged div.tree-item-self[data-path="${escapedPath}"]`
-                );
-            } else if (sourceControlLeaf && leaf.view.state.aRef == "") {
-                el = sourceControlLeaf.view.containerEl.querySelector(
-                    `div.changes div.tree-item-self[data-path="${escapedPath}"]`
-                );
-            } else if (historyLeaf) {
-                el = historyLeaf.view.containerEl.querySelector(
-                    `div.tree-item-self[data-path='${escapedPath}']`
-                );
-            }
-            el?.addClass("is-active");
-        } else {
-            this.lastDiffViewState = undefined;
-        }
-    }
-
+    /** 处理无网络错误 - Handle no network error */
     handleNoNetworkError(_: NoNetworkError): void {
         if (!this.state.offlineMode) {
-            this.displayError(
-                "Git: Going into offline mode. Future network errors will no longer be displayed.",
-                2000
-            );
-        } else {
-            this.log("Encountered network error, but already in offline mode");
+            this.displayError("Git: Going into offline mode. Future network errors will no longer be displayed.", 2000);
         }
-        this.setPluginState({
-            gitAction: CurrentGitAction.idle,
-            offlineMode: true,
-        });
+        this.setPluginState({ gitAction: CurrentGitAction.idle, offlineMode: true });
     }
 
-    // region: displaying / formatting messages
+    // ── 消息显示 - Message display ────────────────────────────────────
+
+    /** 显示消息 - Display message */
     displayMessage(message: string, timeout: number = 4 * 1000): void {
         this.statusBar?.displayMessage(message.toLowerCase(), timeout);
-
         if (!this.settings.disablePopups) {
-            if (
-                !this.settings.disablePopupsForNoChanges ||
-                !message.startsWith("No changes")
-            ) {
+            if (!this.settings.disablePopupsForNoChanges || !message.startsWith("No changes")) {
                 new Notice(message, 5 * 1000);
             }
         }
-
         this.log(message);
     }
 
+    /** 显示错误 - Display error */
     displayError(data: unknown, timeout: number = 10 * 1000): void {
         if (data instanceof Errors.UserCanceledError) {
             new Notice("Aborted");
             return;
         }
         let error: Error;
-        if (data instanceof Error) {
-            error = data;
-        } else {
-            error = new Error(String(data));
-        }
+        if (data instanceof Error) error = data;
+        else error = new Error(String(data));
 
         this.setPluginState({ gitAction: CurrentGitAction.idle });
         if (this.settings.showErrorNotices) {
@@ -1634,6 +715,7 @@ I strongly recommend to use "Source mode" for viewing the conflicted files. For 
         this.statusBar?.displayMessage(error.message.toLowerCase(), timeout);
     }
 
+    /** 日志输出 - Log output */
     log(...data: unknown[]) {
         console.log(`${this.manifest.id}:`, ...data);
     }
