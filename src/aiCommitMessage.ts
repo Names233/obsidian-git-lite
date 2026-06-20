@@ -103,7 +103,13 @@ export class AICommitMessageGenerator {
             // 构建 API 端点 URL - Build API endpoint URL
             // 移除末尾斜杠，拼接 chat completions 路径
             // Remove trailing slash, append chat completions path
-            const endpoint = baseUrl.replace(/\/+$/, "") + "/v1/chat/completions";
+            // 智能拼接 API 端点 - Smart API endpoint construction
+            // 如果 base_url 已包含 /v1，直接加 /chat/completions
+            // If base_url already contains /v1, append /chat/completions directly
+            const cleanBase = baseUrl.replace(/\/+$/, "");
+            const endpoint = cleanBase.endsWith("/v1")
+                ? cleanBase + "/chat/completions"
+                : cleanBase + "/v1/chat/completions";
 
             // 构建请求体 - Build request body
             const body = {
