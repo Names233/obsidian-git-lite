@@ -140,7 +140,7 @@ export default class ObsidianGit extends Plugin {
             id: "commit",
             name: "提交所有更改 - Commit all changes",
             callback: () => this.promiseQueue.addTask(() =>
-                this.commit({ fromAuto: false })
+                this.commitAndSync({ fromAutoBackup: false })
             ),
         });
 
